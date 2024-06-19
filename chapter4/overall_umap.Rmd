@@ -1,0 +1,270 @@
+---
+title: "overall_umap"
+author: "Hongke Peng"
+date: "16/12/2021"
+output: html_document
+---
+
+#load packages
+```{R}
+#library(tidyr)
+library(dsb)
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(harmony)
+```
+
+#load data
+```{r}
+srt=readRDS("for_paper_data/srt_all.rds")
+srt[["percent.mt"]]=PercentageFeatureSet(srt,pattern="^MT-")
+
+table(srt$Sample)
+srt$stage="post"
+srt$stage[grepl("C1D1",srt$Sample)]="pre"
+table(srt$stage)
+```
+
+#part 1 -----------------
+#normalization,scale,remove BCR/TCR genes and batch correction
+```{r}
+#normalize and scale on RNA
+DefaultAssay(srt)="RNA"
+srt=NormalizeData(srt)
+srt=FindVariableFeatures(srt,nfeatures=3000)
+hvg=VariableFeatures(srt)[!grepl("^IGHV",VariableFeatures(srt))]#exclude IGHV genes
+hvg=hvg[!grepl("^IGLV",hvg)]#exclude IGLV genes
+hvg=hvg[!grepl("^IGKV",hvg)]
+hvg=hvg[!grepl("^TRAV",hvg)]
+hvg=hvg[!grepl("^TRBV",hvg)]
+hvg=hvg[!grepl("^TRGV",hvg)]
+srt=ScaleData(srt)
+#srt=ScaleData(srt,vars.to.regress=c("S.Score","G2M.Score","percent.mt"))
+#runPCA
+#srt=RunPCA(srt,features=hvg,reduction.name="uncorrPCA",reduction.key="uncorrPCA_")
+srt=RunPCA(srt,reduction.name="uncorrPCA",reduction.key="uncorrPCA_")
+ElbowPlot(object=srt,ndims=50,reduction="uncorrPCA")
+#run harmony
+theta.to.use=1
+srt=RunHarmony(srt,
+               group.by.vars="patient",
+               reduction="uncorrPCA",
+               theta=theta.to.use,
+               plot_convergence=T,
+               reduction.save="harmonyPCA",
+               kmeans_init_nstart=20,
+               kmeans_init_iter_max=100)
+ElbowPlot(object=srt,ndims=50,reduction="harmonyPCA")
+```
+#run umap
+```{r}
+srt=RunUMAP(srt,
+            dims=1:30,
+            reduction="harmonyPCA",
+            reduction.name="harmonyUMAP",
+            reduction.key="harmonyUMAP_")
+srt=FindNeighbors(srt,
+                  reduction="harmonyPCA",
+                  dims=1:30,
+                  graph.name="h")
+srt=FindClusters(srt,graph.name="h",algorithm=1,resolution=0.5)
+```
+
+```{r,fig.width=15,fig.height=5}
+p1=DimPlot(srt,reduction="harmonyUMAP",group.by="patient",order=T) + NoAxes()
+p2=DimPlot(srt,reduction="harmonyUMAP",group.by="stage",order=F) + NoAxes()
+p3=DimPlot(srt,reduction="harmonyUMAP",order=T,label=T) + NoAxes()
+p=p1+p2+p3
+ggsave(plot=p,filename="overall_umap_figure/umap.pdf",width=15,height=5)
+p
+```
+
+#part 2 -----------------
+analysis in this part shows that: 
+in *h_res.0.5 clusters*: 
+- cluster 10: dead cells
+- cluster 13: doublets
+- cluster 14: proliferating cells
+- cluster 9: doublets
+
+#find lowq cell and doublets
+```{r,fig.width=10,fig.height=10}
+for (i in seq(0,2,0.25)) {
+  srt=FindClusters(srt,graph.name="h",algorithm=1,resolution=i)
+}
+library(clustree)
+clustree::clustree(srt,prefix="h_res.")
+ggsave("overall_umap_figure/clustree.pdf",width=15,height=15)
+```
+
+```{r,fig.width=10,fig.height=5}
+DimPlot(srt,reduction="harmonyUMAP",order=T,label=T,split.by="stage",group.by="h_res.0.5") + NoAxes()
+ggsave("overall_umap_figure/dimplot_split_by_stage.pdf",width=10,height=5)
+```
+
+```{r,fig.width=5,fig.height=5}
+DimPlot(srt,reduction="harmonyUMAP",order=T,label=T,group.by="h_res.0.5") + NoAxes()
+```
+
+```{r,fig.width=20,fig.height=10}
+VlnPlot(srt,features=c("nCount_RNA","nFeature_RNA","percent.mt","S.Score"),pt.size=0,ncol=2,group.by="h_res.0.5")
+ggsave("overall_umap_figure/vlnplot_basis.pdf",width=20,heigh)
+```
+```{r,fig.width=15,fig.height=15}
+DefaultAssay(srt)="DSB"
+rownames(srt)[grep("CD1",rownames(srt))]
+FeaturePlot(srt,reduction="harmonyUMAP",features=c("CD3-UCHT1","CD4-RPA-T4","CD8","CD19.1","CD20","CD1d","CD56-(NCAM)","CD11c","CD16"),min.cutoff="q2",max.cutoff="q98",ncol=3,order=T)
+ggsave("overall_umap_figure/featureplot_surface_marker.pdf",width=15,height=15)
+```
+
+```{r,fig.width=15,fig.height=10}
+DefaultAssay(srt)="RNA"
+rownames(srt)[grep("XCL",rownames(srt))]
+FeaturePlot(srt,reduction="harmonyUMAP",features=c("S.Score","MKI67","STMN1","TUBA1B"),min.cutoff="q2",max.cutoff="q98",ncol=3,order=T)
+ggsave("overall_umap_figure/featureplot_prolifering_cells.pdf",width=15,height=10)
+```
+analysis in this part shows that: 
+in *h_res.0.5 clusters*: 
+- cluster 10: dead cells
+- cluster 13: doublets
+- cluster 14: proliferating cells
+- cluster 9: doublets
+
+```{r}
+saveRDS(srt,"for_paper_data/srt_filtered.rds")
+```
+
+```{r,fig.width=5,fig.height=5}
+srt$seurat_clusters=srt$h_res.0.5
+to_rm=names(srt@meta.data)[grep("h_res.",names(srt@meta.data))]
+for (i in to_rm) {
+  srt[[i]]=NULL
+}
+srt@active.ident=srt$seurat_clusters
+srt=subset(srt,seurat_clusters %in% c(0:8,11,12,15))
+DimPlot(srt,reduction="harmonyUMAP",label=T) + NoAxes()
+ggsave("overall_umap_figure/dimplot_no_lowq_doublets_umap.pdf",width=5,height=5)
+```
+#make subsets data
+```{r}
+saveRDS(srt,"for_paper_data/srt_filtered.rds")
+```
+
+```{r}
+srt=readRDS("for_paper_data/srt_filtered.rds")
+t=subset(srt,seurat_clusters %in% c(0,1,2))
+t_nk=subset(srt,seurat_clusters %in% c(0,1,2,3,8))
+b=subset(srt,seurat_clusters %in% c(4,6,7))
+mono=subset(srt,seurat_clusters %in% c(5,11,12,15))
+
+saveRDS(t,"for_paper_data/raw_t.rds")
+saveRDS(t_nk,"for_paper_data/raw_t_nk.rds")
+saveRDS(b,"for_paper_data/raw_b.rds")
+saveRDS(mono,"for_paper_data/raw_mono.rds")
+```
+
+#part 3 -----------------
+#save data
+```{r}
+saveRDS(srt,"for_paper_data/srt_all.rds")
+```
+
+#make subsets data
+
+
+```{r}
+t_nk=subset(srt,seurat_clusters %in% c(0,1,2,3,8))
+b=subset(srt,seurat_clusters %in% c(4,6,7))
+mono=subset(srt,seurat_clusters %in% c(5,11,12,15))
+
+saveRDS(t_nk,"for_paper_data/raw_t_nk.rds")
+saveRDS(b,"for_paper_data/raw_b.rds")
+saveRDS(mono,"for_paper_data/raw_mono.rds")
+```
+
+
+#part 4 -----------------
+```{r,fig.width=5,fig.height=5}
+srt=readRDS("for_paper_data/srt_filtered.rds")
+DimPlot(srt,reduction="harmonyUMAP",label=T) + NoAxes()
+```
+
+#1st normalize, scale data
+```{r,fig.width=10,fig.height=10}
+#remove all the reduction object
+for (i in names(srt@reductions)) {
+  srt[[i]]=NULL
+}
+DefaultAssay(srt)="RNA"
+srt=NormalizeData(srt)
+srt=FindVariableFeatures(srt,nfeatures=2000)
+#t=ScaleData(t,vars.to.regress=c("S.Score","G2M.Score","percent.mt"))
+srt=ScaleData(srt)
+hvg=VariableFeatures(srt)
+srt=RunPCA(srt,features=hvg,reduction.name="uncorrPCA",reduction.key="uncorrPCA_")
+srt=RunHarmony(srt,theta=1,
+             group.by.vars="patient",
+             reduction="uncorrPCA",
+             reduction.save="harmonyPCA",
+             kmeans_init_nstart=20,
+             kmeans_init_iter_max=100,
+             plot_convergence=T)
+ElbowPlot(srt,reduction="harmonyPCA",ndims=50)
+
+#run umap
+srt=RunUMAP(srt,dims=1:30,reduction="harmonyPCA",reduction.name="harmonyUMAP",reduction.key="harmonyUMAP_")
+#find nieghbor
+srt=FindNeighbors(srt,dims=1:30,reduction="harmonyPCA",graph.name="h")
+for(i in seq(0,2,0.25)){
+  srt=FindClusters(srt,graph.name="h",resolution=i,verbose=FALSE)
+}
+library(clustree)
+clustree(srt,prefix="h_res.")
+```
+
+```{r,fig.width=5,fig.height=5}
+DimPlot(srt,reduction="harmonyUMAP",label=T,group.by="h_res.1.25") + NoAxes()
+```
+
+
+```{r,fig.width=20,fig.height=10}
+VlnPlot(srt,features=c("nCount_RNA","nFeature_RNA","percent.mt","S.Score"),pt.size=0,ncol=2,group.by="h_res.1.25")
+```
+
+```{r,fig.width=15,fig.height=15}
+DefaultAssay(srt)="DSB"
+rownames(srt)[grep("CD1",rownames(srt))]
+FeaturePlot(srt,reduction="harmonyUMAP",features=c(prot_to_use,"rna_GZMB"),min.cutoff="q2",max.cutoff="q98",ncol=4,order=T)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+end

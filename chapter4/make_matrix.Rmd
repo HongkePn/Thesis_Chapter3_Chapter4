@@ -1,0 +1,262 @@
+---
+title: "make_matrix"
+author: "Hongke Peng"
+date: "15/12/2021"
+output: html_document
+---
+
+#load packages
+```{R}
+library(tidyr)
+library(dsb)
+library(dplyr)
+library(Seurat)
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+#library(batchelor)
+library(ggplot2)
+library(DropletUtils)
+library(harmony)
+library(SeuratWrappers)
+library(clusterProfiler)
+```
+#part 1 ----------------
+#RNA matrix
+#load in data
+```{R}
+# make pathway
+sample.id=list.files("/stornext/Genomics/data/CLL_venetoclax/single_cell_data/breast_cancer/matrix/")
+sample.id=sample.id[-c(1:2,17,23:29)] # exclude 10129_C25D1_GEX20
+
+sample.ls=list()
+for (i in sample.id) {
+  sample.ls[[i]]=paste0("/stornext/Genomics/data/CLL_venetoclax/single_cell_data/breast_cancer/matrix/",i,"/outs/filtered_feature_bc_matrix")
+}
+# read in data
+sce=read10xCounts(samples = sample.ls, sample.names = names(sample.ls))
+colnames(sce)=paste0(sce$Sample, "_", sce$Barcode)
+sce=splitAltExps(sce, rowData(sce)$Type)
+counts(altExp(sce))=as.matrix(counts(altExp(sce)))
+rownames(sce)=rowData(sce)$Symbol
+#sce$patient <- sapply(strsplit(sce$Sample, "_"), function(x){x[1]})
+```
+
+#RNA QC
+```{R,fig.width = 15,fig.height = 17}
+# find outliers in gene expression, >= 3*mad
+# by batch
+sce <- addPerCellQC(sce, subsets=list(Mito=grep("^MT-",rowData(sce)$Symbol)))
+qc.sum <- isOutlier(sce$sum, log = TRUE, type = "both", batch = sce$Sample)
+qc.detected <- isOutlier(sce$detected, log = TRUE, type = "both", batch = sce$Sample)
+qc.mito <- isOutlier(sce$subsets_Mito_percent, type = "higher", batch = sce$Sample)
+sce$discard <- qc.sum | qc.detected | qc.mito
+
+pdf("make_matrix_figure/vlnplot_rna_qc.pdf",width=15,height=17,compress=T)
+gridExtra::grid.arrange(
+plotColData(sce, x = "Sample", y = "sum", colour_by = "discard") +
+  scale_y_log10() + ggtitle("Total count") + 
+  theme(axis.text.x  = element_text(angle=30, vjust=0.5)), 
+plotColData(sce, x = "Sample", y = "detected", colour_by = "discard") +
+  ggtitle("Detected features") + 
+  theme(axis.text.x  = element_text(angle=30, vjust=0.5)),
+plotColData(sce, x = "Sample", y = "subsets_Mito_percent", colour_by = "discard") + 
+  ggtitle("Mito genes") + 
+  theme(axis.text.x  = element_text(angle=30, vjust=0.5)),
+ncol = 1
+)
+dev.off()
+```
+#ADT QC
+```{R, fig.width = 15,fig.height = 12}
+qc.adt.sum <- isOutlier(sce$`altexps_Antibody Capture_sum`,log = TRUE,type="lower",batch=sce$Sample)
+sce$adt.discard <- qc.adt.sum
+
+pdf("make_matrix_figure/vlnplot_adt_qc.pdf",width=15,height=12)
+gridExtra::grid.arrange(
+plotColData(sce, x = "Sample", y = "altexps_Antibody Capture_sum", colour_by = "adt.discard") +
+  scale_y_log10() + ggtitle("Total ADT count") + 
+  theme(axis.text.x  = element_text(angle=30, vjust=0.5)), 
+plotColData(sce, x = "Sample", y = "altexps_Antibody Capture_detected", colour_by = "adt.discard") +
+  ggtitle("Detected ADT features") + 
+  theme(axis.text.x  = element_text(angle=30, vjust=0.5)),
+ncol = 1
+)
+dev.off()
+```
+
+#after QC
+```{r,fig.width=8,fig.height=5}
+sce$discard_usage <- sce$discard | sce$adt.discard
+table(sce$discard_usage) # 90586 left and 15302 filtered out
+
+sce$patient=sapply(strsplit(sce$Sample,"_"),function(x){x[1]})
+df=table(sce$discard_usage,sce$patient) %>% as.data.frame()
+colnames(df)=c("discard","patient","ncell")
+df$discard=factor(df$discard,levels=c("TRUE","FALSE"))
+ggplot(df,aes(x=patient,y=ncell,fill=discard)) + geom_col(width=0.8) + theme_bw() + ggtitle("cell numbers after quality control")
+ggsave(filename="make_matrix_figure/barplot_cell_num_after_QC.pdf",width=8,height=5)
+```
+
+#discard cells
+```{R}
+sce=sce[,!sce$discard_usage]
+```
+
+#QC-gene
+```{r,fig.width=8,fig.height=5}
+dim(sce) #33538 90586
+sce=sce[rowSums(counts(sce))>10,]
+dim(sce) #19750 245164
+```
+
+#sce to srt
+```{r}
+#make RNA matrix
+srt=CreateSeuratObject(counts=counts(sce),assay="RNA")
+srt=NormalizeData(srt,assay="RNA")
+#make ADT matrix
+srt[["ADT"]]=CreateAssayObject(counts=counts(altExp(sce)))
+srt=NormalizeData(srt,normalization.method="CLR",assay="ADT")
+#make meta data
+meta=as.data.frame(colData(sce))
+meta=meta[,c("Sample","patient")]
+srt=AddMetaData(srt,metadata=meta)
+```
+
+#part 2 ----------------
+#normalize protein data
+```{r,fig.width=15,fig.height=5}
+#non-dropout names
+sce=read10xCounts(samples=sample.ls,sample.names=names(sample.ls))
+cell_name=paste0(sce$Sample, "_", sce$Barcode)
+rm(sce)
+#filtered cell names
+srt=readRDS("for_paper_data/srt_all.rds")
+filter_cell_name=colnames(srt)
+rm(srt)
+#raw names
+raw.ls=gsub("filtered","raw",sample.ls)
+names(raw.ls)=names(sample.ls)
+raw=Read10X(raw.ls)
+background=setdiff(colnames(raw$`Gene Expression`),cell_name)
+prot=raw$`Antibody Capture`
+rna=raw$`Gene Expression`
+#create metadata of droplet QC stats used in standard scRNAseq processing
+rna_size=log10(Matrix::colSums(rna))
+prot_size=log10(Matrix::colSums(prot))
+ngene=Matrix::colSums(rna>0)
+md=as.data.frame(cbind(rna_size,ngene,prot_size))
+md$bc=rownames(md)
+md$droplet_class=ifelse(test=md$bc %in% cell_name,yes="cell",no="background")
+#rm low Q cells
+lowq=cell_name[!(cell_name %in% filter_cell_name)]
+md=md[!(md$bc %in% lowq),]
+md=md%>%dplyr::filter(rna_size>0 & prot_size>0)
+#plot
+c1=ggplot(md, aes(x = rna_size, fill = droplet_class)) + 
+  geom_density(alpha = 0.3) + ggtitle("RNA library size") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) +
+  NoLegend()
+  
+c2=ggplot(md, aes(x = prot_size, fill = droplet_class)) + 
+  geom_density(alpha = 0.3) + ggtitle("ADT library size") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) + 
+  NoLegend()
+
+c3=ggplot(md, aes(x = log10(ngene), fill = droplet_class)) + 
+  geom_density(alpha = 0.3) + ggtitle("Gene detected") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank())
+  
+c=c1+c2+c3
+ggsave(plot=c,"make_matrix_figure/background_stained_cell.pdf",width=15,height=5)
+c
+```
+
+```{r}
+#cell matrix
+cells_mtx_rawprot=as.matrix(prot[,filter_cell_name])
+#dropout matrix
+background_drops=md$bc[md$prot_size>1.5 & md$prot_size<3 & md$droplet_class=="background"]
+negative_mtx_rawprot=as.matrix(prot[,background_drops])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers
+markers=names(markers)[1:138]#CD80.1 has no expression
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                           empty_drop_matrix=negative_mtx_rawprot,
+                           denoise.counts=T,
+                           use.isotype.control=T,
+                           isotype.control.name.vec=ctrl)
+write.csv(output,"make_matrix_figure/dsb_srt_all.csv")
+sum(colnames(output)==filter_cell_name) #90586
+rm(raw,prot,rna,background,ngene,prot_size,rna_size)
+#add normalized prot data to srt
+srt=readRDS("for_paper_data/srt_all.rds")
+srt[["DSB"]]=CreateAssayObject(data=output)
+```
+
+#part 3 ----------------
+#add cell cycling score
+```{r}
+DefaultAssay(srt)="RNA"
+# Download cell cycle genes for organism at https://github.com/hbc/tinyatlas/tree/master/cell_cycle. Read it in with:
+cc_file=RCurl::getURL("https://raw.githubusercontent.com/hbc/tinyatlas/master/cell_cycle/Homo_sapiens.csv")
+cell_cycle_genes=read.csv(text=cc_file)
+#transfer the ENS to gene symbol
+id=bitr(cell_cycle_genes$geneID,"ENSEMBL","SYMBOL","org.Hs.eg.db")
+cell_cycle_genes=merge(cell_cycle_genes,id,by.x="geneID",by.y="ENSEMBL")
+s_genes=cell_cycle_genes$SYMBOL[cell_cycle_genes$phase=="S"]
+g2m_genes=cell_cycle_genes$SYMBOL
+#cell cycle scoring
+srt=CellCycleScoring(srt,g2m.features=g2m_genes,s.features=s_genes)
+```
+
+
+
+
+#part 4 ----------------
+#save data
+```{r}
+saveRDS(srt,"for_paper_data/srt_all.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+end

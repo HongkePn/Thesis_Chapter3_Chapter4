@@ -1,0 +1,1058 @@
+---
+title: "refine_overall_cluster"
+author: "Hongke Peng"
+date: "02/01/2022"
+output: html_document
+---
+
+#load packages
+```{R}
+#library(tidyr)
+library(dsb)
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(harmony)
+```
+
+#subset srt
+```{r,fig.width=5,fig.height=5}
+b.names=colnames(b)
+t.names=colnames(t)
+m.names=colnames(m)
+
+srt=readRDS("for_paper_data/srt_filtered.rds")
+DimPlot(srt,reduction="harmonyUMAP",label=T) + NoAxes()
+nk.names=colnames(srt)[srt@active.ident%in%c(3,8)]
+
+cell.names=c(b.names,t.names,m.names,nk.names)
+srt=srt[,cell.names]
+```
+
+```{r}
+srt$refine.type=0
+srt$refine.type[srt@active.ident==8]=1
+srt$refine.type[srt@active.ident==3]=2
+srt$refine.type[srt@active.ident==2]=3
+srt$refine.type[srt@active.ident%in%c(0,1)]=4
+srt$refine.type[srt@active.ident%in%c(4,6,7)]=5
+
+srt$refine.type.2=as.character(srt$refine.type)
+srt$refine.type.2[srt$refine.type %in% c(1,2)]=paste0("nk.",srt$refine.type.2[srt$refine.type %in% c(1,2)])
+srt$refine.type.2[srt$refine.type==0]="m.0"
+  
+t$refine.type.2=paste0("t.",t$refine.type)
+b$refine.type.2=paste0("b.",b$refine.type)
+
+srt$refine.type.2[b.names]=b$refine.type.2
+srt$refine.type.2[t.names]=t$refine.type.2
+
+table(srt$refine.type.2)
+```
+
+
+```{r,fig.width=10,fig.height=10}
+#remove all the reduction object
+for (i in names(srt@reductions)) {
+  srt[[i]]=NULL
+}
+DefaultAssay(srt)="RNA"
+srt=NormalizeData(srt)
+srt=FindVariableFeatures(srt,nfeatures=2000)
+srt=ScaleData(srt,vars.to.regress=c("S.Score","G2M.Score","percent.mt"))
+#srt=ScaleData(srt)
+hvg=VariableFeatures(srt)
+#run RNA PCA
+srt=RunPCA(srt,features=hvg,reduction.name="uncorrPCA",reduction.key="uncorrPCA_")
+srt=RunHarmony(srt,theta=1,
+             group.by.vars="patient",
+             reduction="uncorrPCA",
+             reduction.save="harmonyPCA",
+             kmeans_init_nstart=20,
+             kmeans_init_iter_max=100,
+             plot_convergence=T)
+ElbowPlot(srt,reduction="harmonyPCA",ndims=50)
+
+#run DSB PCA
+DefaultAssay(srt)="DSB"
+#make a dsb PCA slot
+srt=FindVariableFeatures(srt)
+srt=ScaleData(srt)
+srt=RunPCA(srt,reduction.name="pdsb",reduction.key="pdsb_")
+#choose markers
+#rownames(t)[grep("CD3",rownames(t))]
+prot_to_use=c("CD3-UCHT1","CD4-RPA-T4","CD8","CD45RA","CD45RO","CD25","KLRG1-(MAFA)-SA231A2","CD62L","TCR-a.B","TCR-Vd2","CD19.1","CD20","CD11c","CD24.1")
+#make pseudo slot
+pseudo=t(srt@assays$DSB@data)
+#pseudo=HarmonyMatrix(pseudo,meta_data=t$patient,do_pca=F,theta=1)
+pseudo=pseudo[,prot_to_use]
+colnames(pseudo)=paste("pseudo",1:length(prot_to_use),sep="_")
+srt@reductions$pdsb@cell.embeddings=pseudo
+
+srt=FindMultiModalNeighbors(srt,
+                          reduction.list=list("harmonyPCA","pdsb"),
+                          #reduction.list=list("harmonyPCA","dsbPCA"),
+                          dims.list=list(1:30,1:length(prot_to_use)),
+                          #dims.list=list(1:50,1:20),
+                          modality.weight.name="RNA.weight",
+                          k.nn=30)
+srt=RunUMAP(srt,nn.name="weighted.nn",reduction.name="wnn.umap",reduction.key="wnnUMAP_")
+for(i in seq(0,2,0.2)){
+  srt=FindClusters(srt,graph.name="wsnn",algorithm=3,resolution=i,verbose=FALSE)
+}
+library(clustree)
+clustree(srt,prefix="wsnn_res.")
+```
+
+```{r,fig.width=8,fig.height=8}
+DimPlot(srt,reduction="wnn.umap",label=T, group.by="refine.type.2",order=T) + NoLegend() + NoAxes()
+```
+
+```{r,fig.width=7.5,fig.height=2.5}
+DefaultAssay(srt)="DSB"
+rownames(srt)[grep("CD56",rownames(t))]
+FeaturePlot(srt,features=c("CD4-RPA-T4","CD8","CD56-(NCAM)"),ncol=3,order=T,max.cutoff="q98",min.cutoff="q2")
+```
+
+```{r}
+srt$refine.type=0
+srt$refine.type[srt$h_res.0.25==5]=1
+srt$refine.type[srt$h_res.0.25==3]=2
+srt$refine.type[srt$h_res.0.25==2]=3
+srt$refine.type[srt$h_res.0.25==0]=4
+srt$refine.type[srt$h_res.0.25==1]=5
+srt$refine.type=factor(srt$refine.type,levels=0:5)
+```
+
+```{r,fig.width=2.5,fig.height=2.5}
+DimPlot(srt,reduction="harmonyUMAP",group.by="refine.type",label=T)
+```
+
+
+```{r,fig.width=5,fig.height=5}
+c3=c("darkgrey","#FF8F40","#FFAD73","#A56AAC","#5FB14E","#528DD9")
+DimPlot(srt,reduction="harmonyUMAP",group.by="refine.type",cols=c3,label=T,label.box=T,label.color="white",label.size=5) + NoLegend() + NoAxes() + ggtitle(NULL)
+ggsave("refine_overall_umap_figure/dimplot_refine_umap.pdf",width=5,height=5,dpi=300)
+```
+
+#make label for overall umap
+```{r}
+
+```
+
+```{r,fig.width=7,fig.height=5}
+c3=c("darkgrey","#FF8F40","#FFAD73","#A56AAC","#5FB14E","#528DD9")
+DimPlot(srt,reduction="harmonyUMAP",group.by="refine.type.2",label=T,label.size=5) + NoAxes() + ggtitle(NULL)
+#ggsave("refine_overall_umap_figure/dimplot_refine_umap.pdf",width=5,height=5,dpi=300)
+```
+
+#part 2 --------------
+```{r,fig.width=5,fig.height=5}
+srt=readRDS("for_paper_data/srt_filtered.rds")
+DimPlot(srt,reduction="harmonyUMAP",label=T) + NoAxes()
+```
+
+```{r,fig.width=10,fig.height=10}
+#remove all the reduction object
+for (i in names(srt@reductions)) {
+  srt[[i]]=NULL
+}
+DefaultAssay(srt)="RNA"
+srt=NormalizeData(srt)
+srt=FindVariableFeatures(srt,nfeatures=2000)
+#srt=ScaleData(srt,vars.to.regress=c("S.Score","G2M.Score","percent.mt"))
+srt=ScaleData(srt)
+hvg=VariableFeatures(srt)
+#run RNA PCA
+srt=RunPCA(srt,features=hvg,reduction.name="uncorrPCA",reduction.key="uncorrPCA_")
+srt=RunHarmony(srt,theta=1,
+             group.by.vars="patient",
+             reduction="uncorrPCA",
+             reduction.save="harmonyPCA",
+             kmeans_init_nstart=20,
+             kmeans_init_iter_max=100,
+             plot_convergence=T)
+ElbowPlot(srt,reduction="harmonyPCA",ndims=50)
+
+#run DSB PCA
+DefaultAssay(srt)="DSB"
+#make a dsb PCA slot
+srt=FindVariableFeatures(srt)
+srt=ScaleData(srt)
+srt=RunPCA(srt,reduction.name="pdsb",reduction.key="pdsb_")
+#choose markers
+rownames(t)[grep("CD56",rownames(t))]
+prot_to_use=c("CD3-UCHT1","CD4-RPA-T4","CD8","CD45RA","CD45RO","CD25","KLRG1-(MAFA)-SA231A2","CD56-(NCAM)","CD62L","TCR-a.B","TCR-Vd2","CD19.1","CD20","CD11c","CD24.1")
+#make pseudo slot
+pseudo=t(srt@assays$DSB@data)
+#pseudo=HarmonyMatrix(pseudo,meta_data=t$patient,do_pca=F,theta=1)
+pseudo=pseudo[,prot_to_use]
+colnames(pseudo)=paste("pseudo",1:length(prot_to_use),sep="_")
+srt@reductions$pdsb@cell.embeddings=pseudo
+
+srt=FindMultiModalNeighbors(srt,
+                          reduction.list=list("harmonyPCA","pdsb"),
+                          #reduction.list=list("harmonyPCA","dsbPCA"),
+                          dims.list=list(1:20,1:length(prot_to_use)),
+                          #dims.list=list(1:50,1:20),
+                          modality.weight.name="RNA.weight",
+                          k.nn=30)
+srt=RunUMAP(srt,nn.name="weighted.nn",reduction.name="wnn.umap",reduction.key="wnnUMAP_")
+for(i in seq(0,2,0.2)){
+  srt=FindClusters(srt,graph.name="wsnn",algorithm=3,resolution=i,verbose=FALSE)
+}
+library(clustree)
+clustree(srt,prefix="wsnn_res.")
+```
+
+```{r,fig.width=5,fig.height=5}
+c3=c("darkgrey","#FF8F40","#FFAD73","#A56AAC","#5FB14E","#528DD9")
+DimPlot(srt,reduction="wnn.umap",group.by="wsnn_res.1",label=T) + NoAxes() + NoLegend() + ggtitle(NULL)
+DimPlot(srt,reduction="wnn.umap",group.by="patient") + NoAxes() + ggtitle(NULL)
+DimPlot(srt,reduction="wnn.umap",group.by="stage") + NoAxes() + NoLegend() + ggtitle(NULL)
+#ggsave("refine_overall_umap_figure/dimplot_refine_umap.pdf",width=5,height=5,dpi=300)
+```
+
+```{r,fig.width=20,fig.height=20}
+FeaturePlot(srt,reduction="wnn.umap",features=c(prot_to_use,"rna_GZMB"),min.cutoff="q2",max.cutoff="q98",ncol=4,order=T)
+#ggsave("t_nk_cluster_figure/featureplot_wnn_umap_before_filter.pdf",width=20,height=20)
+```
+
+```{r,fig.width=20,fig.height=10}
+VlnPlot(srt,features=c("nCount_RNA","nFeature_RNA","nCount_ADT","nFeature_ADT","S.Score","percent.mt","RNA.weight"),pt.size=0,ncol=2,group.by="wsnn_res.1")
+```
+#filtering
+in wsnn_res.1
+doublets: cluster 22, 30, 31, 35
+high mt.percent: 14
+also rm: cluster: 29
+```{r}
+srt=subset(srt,wsnn_res.1 != 22 & wsnn_res.1 != 30 & wsnn_res.1 != 31 & wsnn_res.1 != 35 & wsnn_res.1 != 14 & wsnn_res.1 != 29)
+```
+
+```{r,fig.width=5,fig.height=5}
+c3=c("darkgrey","#FF8F40","#FFAD73","#A56AAC","#5FB14E","#528DD9")
+DimPlot(srt,reduction="wnn.umap",group.by="wsnn_res.1",label=T) + NoAxes() + NoLegend() + ggtitle(NULL)
+DimPlot(srt,reduction="wnn.umap",group.by="patient") + NoAxes() + ggtitle(NULL)
+DimPlot(srt,reduction="wnn.umap",group.by="stage") + NoAxes() + NoLegend() + ggtitle(NULL)
+#ggsave("refine_overall_umap_figure/dimplot_refine_umap.pdf",width=5,height=5,dpi=300)
+```
+
+#re-run wnn 
+
+```{r,fig.width=10,fig.height=10}
+#remove all the reduction object
+for (i in names(srt@reductions)) {
+  srt[[i]]=NULL
+}
+DefaultAssay(srt)="RNA"
+srt=NormalizeData(srt)
+srt=FindVariableFeatures(srt,nfeatures=2000)
+#srt=ScaleData(srt,vars.to.regress=c("S.Score","G2M.Score","percent.mt"))
+srt=ScaleData(srt)
+hvg=VariableFeatures(srt)
+#run RNA PCA
+srt=RunPCA(srt,features=hvg,reduction.name="uncorrPCA",reduction.key="uncorrPCA_")
+srt=RunHarmony(srt,theta=1,
+             group.by.vars="patient",
+             reduction="uncorrPCA",
+             reduction.save="harmonyPCA",
+             kmeans_init_nstart=20,
+             kmeans_init_iter_max=100,
+             plot_convergence=T)
+ElbowPlot(srt,reduction="harmonyPCA",ndims=50)
+
+#run DSB PCA
+DefaultAssay(srt)="DSB"
+#make a dsb PCA slot
+srt=FindVariableFeatures(srt)
+srt=ScaleData(srt)
+srt=RunPCA(srt,reduction.name="pdsb",reduction.key="pdsb_")
+#choose markers
+rownames(t)[grep("CD28.",rownames(t))]
+prot_to_use=c("CD3-UCHT1","CD4-RPA-T4","CD8","CD45RA","CD45RO","CD25","KLRG1-(MAFA)-SA231A2","CD56-(NCAM)","CD62L","TCR-a.B","TCR-Vd2","CD19.1","CD20","CD11c","CD24.1","CD28.1","Mouse-IgG2a--k-isotype-Ctrl","Mouse-IgG1--k-isotype-Ctrl")
+#prot_to_use=c("CD3-UCHT1","CD4-RPA-T4","CD8","CD25","CD45RA","CD45RO","CD56-(NCAM)","CD62L","TCR-a.B","TCR-Vd2","CD19.1","CD20","CD11c","CD24.1")
+#make pseudo slot
+pseudo=t(srt@assays$DSB@data)
+#pseudo=HarmonyMatrix(pseudo,meta_data=t$patient,do_pca=F,theta=1)
+pseudo=pseudo[,prot_to_use]
+colnames(pseudo)=paste("pseudo",1:length(prot_to_use),sep="_")
+srt@reductions$pdsb@cell.embeddings=pseudo
+
+srt=FindMultiModalNeighbors(srt,
+                          reduction.list=list("harmonyPCA","pdsb"),
+                          #reduction.list=list("harmonyPCA","dsbPCA"),
+                          dims.list=list(1:30,1:length(prot_to_use)),
+                          #dims.list=list(1:50,1:20),
+                          modality.weight.name="RNA.weight",
+                          k.nn=30)
+srt=RunUMAP(srt,nn.name="weighted.nn",reduction.name="wnn.umap",reduction.key="wnnUMAP_")
+for(i in seq(0,2,0.2)){
+  srt=FindClusters(srt,graph.name="wsnn",algorithm=3,resolution=i,verbose=FALSE)
+}
+library(clustree)
+clustree(srt,prefix="wsnn_res.")
+```
+
+```{r,fig.width=5,fig.height=5}
+c3=c("darkgrey","#FF8F40","#FFAD73","#A56AAC","#5FB14E","#528DD9")
+DimPlot(srt,reduction="wnn.umap",group.by="wsnn_res.0.6",label=T) + NoLegend() + ggtitle(NULL)
+DimPlot(srt,reduction="wnn.umap",group.by="patient") + NoAxes() + ggtitle(NULL)
+DimPlot(srt,reduction="wnn.umap",group.by="stage") + NoAxes() + NoLegend() + ggtitle(NULL)
+#ggsave("refine_overall_umap_figure/dimplot_refine_umap.pdf",width=5,height=5,dpi=300)
+```
+
+```{r,fig.width=20,fig.height=10}
+VlnPlot(srt,features=c("nCount_RNA","nFeature_RNA","nCount_ADT","nFeature_ADT","S.Score","percent.mt","RNA.weight"),pt.size=0.01,ncol=2,group.by="wsnn_res.0.6")
+```
+```{r,fig.width=20,fig.height=20}
+DefaultAssay(srt)="DSB"
+rownames(srt)[grep("CD27",rownames(srt))]
+FeaturePlot(srt,reduction="wnn.umap",features=c(prot_to_use,"CD27.1","rna_TCL1A"),min.cutoff="q2",max.cutoff="q98",ncol=4,order=T)
+#ggsave("t_nk_cluster_figure/featureplot_wnn_umap_before_filter.pdf",width=20,height=20)
+```
+
+#filter
+wsnn_res.0.6
+low adt: 25
+high adt: 24
+```{r}
+srt=subset(srt,wsnn_res.0.6 != 24 & wsnn_res.0.6 != 25)
+#then loop back
+saveRDS(srt,"for_paper_data/srt_refine.rds")
+```
+
+#make umap for poster
+```{r,fig.width=5,fig.height=5}
+srt=readRDS("for_paper_data/srt_refine.rds")
+DimPlot(srt,reduction="wnn.umap",group.by="wsnn_res.0.6",label=T) + NoLegend() + ggtitle(NULL) + xlab("umap_1") + ylab("umap_2")
+DimPlot(srt,reduction="wnn.umap",group.by="patient") + NoAxes() + ggtitle(NULL)
+DimPlot(srt,reduction="wnn.umap",group.by="stage") + NoAxes() + NoLegend() + ggtitle(NULL)
+```
+
+```{r,fig.width=5,fig.height=5}
+srt=readRDS("for_paper_data/srt_refine.rds")
+#make mono cluster
+srt$refind.type=0
+#make cd4 t cluster
+srt$refind.type[srt$wsnn_res.0.6==5]=1
+srt$refind.type[srt$wsnn_res.0.6==6]=2
+srt$refind.type[srt$wsnn_res.0.6==2]=3
+srt$refind.type[srt$wsnn_res.0.6==1]=4
+srt$refind.type[srt$wsnn_res.0.6==18]=5
+srt$refind.type[srt$wsnn_res.0.6==16]=6
+#make gd t cluster
+srt$refind.type[srt$wsnn_res.0.6==15]=7
+srt$refind.type[srt$wsnn_res.0.6==13]=8
+srt$refind.type[srt$wsnn_res.0.6==10]=9
+srt$refind.type[srt$wsnn_res.0.6%in%c(4,17,20)]=10
+#leave cluster 11 for nk-T
+#make b cluster
+srt$refind.type[srt$wsnn_res.0.6==9]=12
+srt$refind.type[srt$wsnn_res.0.6==3]=13
+srt$refind.type[srt$wsnn_res.0.6==8]=14
+srt$refind.type[srt$wsnn_res.0.6==14]=15
+#make nk cluster
+srt$refind.type[srt$wsnn_res.0.6==11]=16
+srt$refind.type[srt$wsnn_res.0.6%in%c(0,19,24)]=17
+
+#make nk-T cluster
+DimPlot(srt,reduction="wnn.umap",group.by="wsnn_res.1.2",label=T) + ggtitle(NULL) + xlab("UMAP_1") + ylab("UMAP_2")
+nkt.name=colnames(srt)[srt$wsnn_res.1.2==32]
+srt$refind.type[colnames(srt)%in%nkt.name]=11
+```
+
+```{r,fig.width=7,fig.height=7}
+colorset=c("darkgrey",#mono
+           "#9BCA3C","#5FB14E","#91D1C2FF","#CADB73","#3B897C","#3BB846","#A5D0F0","#E882B4","#A56AAC","#DCBFDD","#F055A3",#t cluster
+           "#4DBBD57F","#77B3D9","#D99ACE","#528DD9",#b cluster
+           "#FF8F40","#FFAD73")
+DimPlot(srt,reduction="wnn.umap",group.by="refind.type",cols=colorset,label=T,label.box=T,label.color="white",label.size=3.8) + NoLegend() + NoAxes() + ggtitle(NULL) + xlab("UMAP_1") + ylab("UMAP_2")
+#ggsave("poster/umap.pdf",width=7,height=7)
+```
+
+```{r,fig.width=20,fig.height=10}
+#make bigger clusters
+srt$overall.type=1
+srt$overall.type[srt$refind.type==0]=0
+srt$overall.type[srt$refind.type==7]=2
+srt$overall.type[srt$refind.type%in%c(8,9,10,11)]=3
+srt$overall.type[srt$refind.type%in%c(12,13,14,15)]=4
+srt$overall.type[srt$refind.type%in%c(16,17)]=5
+
+c3=c("darkgrey","#5FB14E","#A5D0F0","#DCBFDD","#77B3D9","#FF8F40")
+DimPlot(srt,reduction="wnn.umap",group.by="overall.type",cols=c3,label=T,label.box=T,label.color="white",label.size=3.8) + NoLegend() + NoAxes() + ggtitle(NULL)
+ggsave("poster/general_umap.pdf",width=7,height=7)
+
+srt$stage=factor(srt$stage,levels=c("pre","post"))
+DimPlot(srt,reduction="wnn.umap",group.by="overall.type",cols=c3,label=T,label.size=3.8,split.by="stage",pt.size=0.01) + NoLegend() + NoAxes() + ggtitle(NULL)
+ggsave("poster/general_umap_split_by_stage.pdf",width=20,height=10)
+```
+
+```{r,fig.width=10,fig.height=2.5}
+x <- subset(srt, refind.type %in% 12:15 & stage == "pre")
+FeaturePlot(x, reduction = "wnn.umap", features = "MCL1", max.cutoff = "q98", min.cutoff = "q2", raster = F, order = F, split.by = "stage")
+VlnPlot(x, group.by = "refind.type", features = c("MCL1", "BCL2A1"), pt.size = 0, cols = c("#4DBBD57F","#77B3D9","#D99ACE","#528DD9"))
+ggsave("refine_overall_umap_figure/vlnplot_a1_mcl1.pdf", width = 10, height = 2.5)
+```
+
+#part 4 composition 
+```{r}
+srt$sample.1=sapply(strsplit(srt$Sample,"_"),function(x){paste(x[1],x[2],sep="_")})
+df=table(srt$refind.type,srt$sample.1)
+df=df/rowSums(df)
+df=as.data.frame(df)
+colnames(df)=c("cluster","sample","prop")
+df$stage="post-VEN"
+df$stage[grepl("C1D1",df$sample)]="pre-VEN"
+df
+```
+
+```{r,fig.width=10,fig.height=5}
+table(df$sample)
+df$ct=paste0("C",df$cluster)
+
+df$sample=factor(df$sample,levels=c("BC01007_C1D1","BC01024_C1D1","BC01028_C1D1","BC01029_C1D1","BC01033_C1D1","BC01007_EOT","BC01024_C28D1","BC01028_C38D1","BC01029_C25D1","BC01033_C23D1"))
+ggplot(df,aes(x=cluster,y=prop,fill=sample)) + geom_col() + theme_minimal() + 
+  scale_fill_manual(values=c("#233D40","#407074","#69B8BF","#467B80","#315659",
+                             "#401829","#732C49","#BF497A","#803051","#5C233B")) + NoLegend()
+
+ggplot(df,aes(x=cluster,y=prop,fill=sample)) + geom_col() + theme_minimal() + 
+  scale_fill_manual(values=c("#0E2940","#2A7ABF","#2675A6","#2D82CC","#2469A6",
+                             "#C5CC04","#A0A603","#B9BF04","#7B8003","#D3D600")) + NoLegend() + 
+  theme(axis.text.x=element_text(face="bold",size=10),
+        axis.text.y=element_text(face="bold",size=8),line=element_blank()) +
+  xlab(NULL) + 
+  ylab(NULL) 
+#ggsave("poster/barplot_composition.pdf",width=8,height=3)
+```
+
+```{r,fig.width=3,fig.height=5}
+b=subset(srt,refind.type%in%12:15)
+df=table(b$sample.1,b$refind.type)/rowSums(table(b$sample.1,b$refind.type))
+#df=table(b$sample.1,b$refind.type)
+df=as.data.frame(df)
+colnames(df)=c("sample","cluster","prop")
+df$cluster=paste0("C",df$cluster)
+df$sample=factor(df$sample,levels=c("BC01007_C1D1","BC01024_C1D1","BC01028_C1D1","BC01029_C1D1","BC01033_C1D1","BC01007_EOT","BC01024_C28D1","BC01028_C38D1","BC01029_C25D1","BC01033_C23D1"))
+df
+ggplot(df,aes(x=sample,y=prop,fill=cluster)) + geom_col(width=0.8) + theme_minimal() + NoLegend() +
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(),line=element_blank()) +
+  scale_fill_manual(values=c("#4DBBD57F","#77B3D9","#D99ACE","#528DD9")) + 
+  xlab(NULL) + 
+  ylab(NULL) +
+  ggtitle("B-cell clusters")
+ggsave("poster/baplot_patient_stage.pdf",width=3,height=5)
+```
+
+
+
+
+
+
+
+
+```{r,fig.width=20,fig.height=10}
+srt$stage=factor(srt$stage,levels=c("pre","post"))
+DimPlot(srt,reduction="wnn.umap",split.by="stage",group.by="refind.type",cols=colorset,pt.size=0.01,label=T,label.size=7) + NoLegend() + NoAxes() + ggtitle(NULL)
+ggsave("make_figures_for_paper_folder/dimplot_split_by_stage.pdf",width=20,height=10)
+```
+
+```{r,fig.width=10,fig.height=5}
+prot_to_use=c("CD3-UCHT1","CD4-RPA-T4","CD8","TCR-Vd2","CD20","CD56-(NCAM)","CD11c","CD45RA")
+
+plot.ls=list()
+for (i in prot_to_use) {
+  plot.ls[[i]]=FeaturePlot(srt,reduction="wnn.umap",features=i,max.cutoff="q98",min.cutoff="q20",order=F)+NoLegend()+NoAxes()
+}
+pdf("poster/featureplot_marker.pdf",width=10,height=5)
+gridExtra::grid.arrange(grobs=plot.ls,ncol=4)
+dev.off()
+```
+```{r,fig.width=5,fig.height=5}
+FeaturePlot(srt,reduction="wnn.umap",features="CD27.1",max.cutoff="q98",min.cutoff="q20",order=T)+NoLegend()+NoAxes()
+ggsave("poster/featureplot_cd27.pdf",width=5,height=5)
+```
+
+
+#part 5 ---------------
+#make vlbplot for B clusters
+```{r,fig.width=10,fig.height=3}
+b=subset(srt,refind.type %in% c(14,15))
+DefaultAssay(b)="RNA"
+plot.ls=list()
+for (i in c("BCL2","BCL2A1","MCL1","BCL2L1")) {
+  plot.ls[[i]]=VlnPlot(b,features=i,group.by="refind.type",pt.size=0,cols=c("#D99ACE","#528DD9")) + xlab(NULL) + ylab(NULL) + NoLegend()
+}
+pdf("poster/vlnplot_bcl2.pdf",width=10,height=8,)
+gridExtra::grid.arrange(grobs=plot.ls,ncol=2)
+dev.off()
+```
+
+#DE analysis
+```{r}
+#pt=subset(srt,refind.type %in% c(12,13,14) & patient != "BC01007")
+pt=subset(srt,refind.type %in% c(12,13,14))
+```
+
+
+```{r,fig.width=5,fig.height=5}
+library(SingleCellExperiment)
+library(edgeR)
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("refind.type","patient","stage")]
+#md$batch="batch1"
+#md$batch[md$patient %in% c("BC01029_C25D1","BC01033_C1D1","BC01033_C23D1")]="batch2"
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+y$samples$stage=factor(y$samples$stage,levels=c("pre","post"))
+  
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)
+y=y[keep, ,keep.lib.sizes=FALSE]
+  
+#calculate normalization factors
+y=calcNormFactors(y)
+  
+# plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                patient_id=y$samples$patient,
+                group_id=y$samples$stage)
+
+p1=ggplot(gg_df,aes(x,y,col=group_id,shape=patient_id))+
+  geom_point(size=3)+
+  labs(x="MDS dim.1",y="MDS dim2")+
+  theme_bw()+
+  theme(panel.grid.minor=element_blank())
+p1
+```
+
+```{r}
+#make design
+f1=factor(y$samples$stage,levels=c("pre","post"))
+f2=y$samples$patient
+design=model.matrix(~0+f1+f2)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  post_vs_pre=post-pre,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit <- glmQLFit(y,design)
+#lrt <- glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+##pre percentage
+pre.group=subset(pt,stage=="pre")
+pre.group=pre.group@assays$RNA@counts
+df$pre.perc=rowSums(pre.group[rownames(df),]>0)/ncol(pre.group)
+##post persentage
+post.group=subset(pt,stage=="post")
+post.group=post.group@assays$RNA@counts
+df$post.prct=rowSums(post.group[rownames(df),]>0)/ncol(post.group)
+table(decideTests(lrt,p.value=0.05))
+#save DGE list
+write.csv(df,file=paste0("de_list/b_cell.csv"))
+```
+
+```{r,fig.width=8,fig.height=8}
+volcano.lab=unlist(strsplit("S100A4/S100A9/S100A8/LY96/NEK6/PRDX4/TRAF1/HMOX1/CFLAR/LGALS1/TNIP2","/"))
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                ylim=c(0,15),
+                xlim=c(-5,5),
+                #title = paste(i,"volcano plot"),
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 0.5"),
+                selectLab = volcano.lab,
+                labSize = 3,
+                legendPosition = 'top',
+                legendLabSize = 15,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 0.75,
+                pCutoff = 0.05,
+                FCcutoff = 0.5)
+#ggsave("poster/b_volcanoplot.pdf",width=8,height=8)
+```
+
+```{r,fig.width=5,fig.height=2}
+df$gene=rownames(df)
+#rm genes with small faction of cells expressing it
+#df=df[df$post.prct>0.05|df$pre.perc>0.05,]
+library(clusterProfiler)
+df=up
+df$gene=rownames(df)
+id=bitr(df$gene,"SYMBOL","ENTREZID","org.Hs.eg.db") #4.5% of input gene IDs are fail to map...
+#make geneList
+marker=merge(df,id,by.x="gene",by.y="SYMBOL")
+marker=data.frame(logFC=marker$logFC,SYMBOL=marker$ENTREZID)
+geneList=marker$logFC
+names(geneList)=marker$SYMBOL
+geneList=sort(geneList,decreasing=T)
+geneList
+#load GMT
+#gmt=read.gmt("pathway/c2.cp.kegg.v7.4.entrez.gmt")
+#gmt=read.gmt("pathway/c2.cp.biocarta.v7.4.entrez.gmt")
+gmt=read.gmt("../pathway/c5.go.bp.v7.4.entrez.gmt")
+#gmt=read.gmt("pathway/c7.immunesigdb.v7.4.entrez.gmt")
+gsea.result=GSEA(geneList,TERM2GENE=gmt,pvalueCutoff=0.05,seed=T)
+dotplot(kegg) + theme(axis.text.y=element_text(size=8))
+gseaplot2(kegg,"GOBP_ELECTRON_TRANSPORT_CHAIN")
+```
+
+
+```{r,fig.width=3,fig.height=3}
+#up=df[df$FDR<0.05&df$logFC>0&(df$post.prct>0.05),]
+up=df[df$FDR<0.05&df$logFC>0,]
+#go look pretty well
+#library(clusterProfiler)
+go.up=enrichGO(gene=rownames(up),
+               OrgDb="org.Hs.eg.db",
+                keyType="SYMBOL",
+                ont="ALL",
+                pAdjustMethod="BH",
+                pvalueCutoff=0.1,
+                qvalueCutoff=0.1)
+selected_go=filter(go.up,Count<=10)
+selected_go=arrange(selected_go,desc(Count))
+barplot(selected_go,showCategory=20)
+
+ggplot(selected_go,aes(Count,fct_reorder(Description,Count)),showCategory=15) + 
+    geom_col(orientation='y',fill="skyblue",width=0.6) + 
+    theme_minimal() + 
+    ylab(NULL) + 
+    xlab("Gene counts") +
+    NoLegend() + 
+    theme(axis.text.y=element_text(face="bold")) + 
+    ggtitle("selected GO terms")
+```
+
+#part 6 ---------------
+#de for t cells
+```{r,fig.width=8,fig.height=8}
+pt=subset(srt,refind.type %in% 1:10)
+#make sce
+matr=pt@assays$RNA@counts
+#md=pt@meta.data[,c("harmony_t0_res.0.5","patient","stage")]
+md=pt@meta.data[,c("refind.type","patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+#pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","harmony_t0_res.0.5")])
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","refind.type")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:11765,retain:7267
+y=y[keep, ,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 cluster_id=as.character(y$samples$refind.type),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$stage)
+gg_df$group_id=factor(gg_df$group_id,levels=c("pre","post"))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+ggplot(gg_df,aes(x,y,col=cluster_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    #scale_color_manual(values=c1)+
+    theme_bw()
+```
+
+```{r,fig.width=6,fig.height=5}
+pt=subset(srt,refind.type %in% 1:10)
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("refind.type","patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+#make pooled sce
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","refind.type")])
+
+volcano.ls=list()
+mds.ls=list()
+
+for (i in unique(pool$refind.type)) {
+  
+  y=pool[,pool$refind.type==i]
+  y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+  
+  #filtering 
+  keep=filterByExpr(y,group=y$samples$stage)
+  summary(keep)
+  y=y[keep, ,keep.lib.sizes=FALSE]
+  
+  #calculate normalization factors
+  y=calcNormFactors(y)
+  
+  #plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 cluster_id=as.character(y$samples$refind.type),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$stage)
+gg_df$group_id=factor(gg_df$group_id,levels=c("pre","post"))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+mds.ls[[i]]=ggplot(gg_df,aes(x,y,col=group_id,shape=patient_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c("orange","grey"))+
+    theme_bw()
+  
+  #make design
+  f1=factor(y$samples$stage,levels=c("pre","post"))
+  f2=y$samples$patient
+  design=model.matrix(~0+f1+f2)
+  colnames(design)=gsub("f\\d","",colnames(design))
+  
+  #make contrast
+  contr=makeContrasts(
+    post_vs_pre=post-pre,
+    levels=colnames(design)
+  )
+  
+  y=estimateDisp(y,design)
+  plotBCV(y)
+  
+  fit=glmFit(y,design)
+  lrt=glmLRT(fit,contrast=contr)
+  #fit <- glmQLFit(y,design)
+  #lrt <- glmQLFTest(fit,contrast=contr)
+  DEG=topTags(lrt,n=Inf)
+  
+  #the proportion of cell express this gene
+  df=DEG$table
+  ##pre percentage
+  pre.group=subset(pt,refind.type==i & stage=="pre")
+  pre.group=pre.group@assays$RNA@counts
+  df$pre.perc=rowSums(pre.group[rownames(df),]>0)/ncol(pre.group)
+  ##post persentage
+  post.group=subset(pt,refind.type==i & stage=="post")
+  post.group=post.group@assays$RNA@counts
+  df$post.prct=rowSums(post.group[rownames(df),]>0)/ncol(post.group)
+  
+  #save DGE list
+  write.csv(df,file=paste0("de_list/t_",i,".csv"))
+  
+  # make volcano plot
+  volcano.ls[[i]]=EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                #xlim=c(-3,3),
+                title = paste("DE gene in",i),
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                selectLab = rownames(df)[df$FDR <= 0.05],
+                labSize = 3,
+                legendPosition = NULL,
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                #widthConnectors = 0.75,
+                pCutoff = 0.05,
+                FCcutoff = 0.05)
+  
+  results=decideTests(lrt,p.value=0.05)
+  print(table(results))
+}
+```
+
+```{r,fig.width=30,fig.height=12}
+gridExtra::grid.arrange(grobs=volcano.ls,ncol=4)
+```
+
+#part 7 ---------------
+#de for nk
+#part 6 ---------------
+#de for t cells
+```{r,fig.width=8,fig.height=8}
+pt=subset(srt,refind.type %in% c(16,17))
+#make sce
+matr=pt@assays$RNA@counts
+#md=pt@meta.data[,c("harmony_t0_res.0.5","patient","stage")]
+md=pt@meta.data[,c("refind.type","patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+#pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","harmony_t0_res.0.5")])
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","refind.type")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:11765,retain:7267
+y=y[keep, ,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 cluster_id=as.character(y$samples$refind.type),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$stage)
+gg_df$group_id=factor(gg_df$group_id,levels=c("pre","post"))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+ggplot(gg_df,aes(x,y,col=cluster_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    #scale_color_manual(values=c1)+
+    theme_bw()
+```
+
+```{r,fig.width=6,fig.height=5}
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("refind.type","patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+#make pooled sce
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","refind.type")])
+
+volcano.ls=list()
+mds.ls=list()
+
+for (i in unique(pool$refind.type)) {
+  
+  y=pool[,pool$refind.type==i]
+  y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+  
+  #filtering 
+  keep=filterByExpr(y,group=y$samples$stage)
+  summary(keep)
+  y=y[keep, ,keep.lib.sizes=FALSE]
+  
+  #calculate normalization factors
+  y=calcNormFactors(y)
+  
+  #plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 cluster_id=as.character(y$samples$refind.type),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$stage)
+gg_df$group_id=factor(gg_df$group_id,levels=c("pre","post"))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+mds.ls[[i]]=ggplot(gg_df,aes(x,y,col=group_id,shape=patient_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c("orange","grey"))+
+    theme_bw()
+  
+  #make design
+  f1=factor(y$samples$stage,levels=c("pre","post"))
+  f2=y$samples$patient
+  design=model.matrix(~0+f1+f2)
+  colnames(design)=gsub("f\\d","",colnames(design))
+  
+  #make contrast
+  contr=makeContrasts(
+    post_vs_pre=post-pre,
+    levels=colnames(design)
+  )
+  
+  y=estimateDisp(y,design)
+  plotBCV(y)
+  
+  fit=glmFit(y,design)
+  lrt=glmLRT(fit,contrast=contr)
+  #fit <- glmQLFit(y,design)
+  #lrt <- glmQLFTest(fit,contrast=contr)
+  DEG=topTags(lrt,n=Inf)
+  
+  #the proportion of cell express this gene
+  df=DEG$table
+  ##pre percentage
+  pre.group=subset(pt,refind.type==i & stage=="pre")
+  pre.group=pre.group@assays$RNA@counts
+  df$pre.perc=rowSums(pre.group[rownames(df),]>0)/ncol(pre.group)
+  ##post persentage
+  post.group=subset(pt,refind.type==i & stage=="post")
+  post.group=post.group@assays$RNA@counts
+  df$post.prct=rowSums(post.group[rownames(df),]>0)/ncol(post.group)
+  
+  #save DGE list
+  write.csv(df,file=paste0("de_list/nk_",i,".csv"))
+  
+  # make volcano plot
+  volcano.ls[[i]]=EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                #xlim=c(-3,3),
+                title = paste("DE gene in",i),
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                selectLab = rownames(df)[df$FDR <= 0.05],
+                labSize = 3,
+                legendPosition = NULL,
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                #widthConnectors = 0.75,
+                pCutoff = 0.05,
+                FCcutoff = 0.05)
+  
+  results=decideTests(lrt,p.value=0.05)
+  print(table(results))
+}
+```
+
+```{r,fig.width=10,fig.height=5}
+volcano.ls[[16]]
+gridExtra::grid.arrange(grobs=volcano.ls[[16]])
+```
+
+#specific for c6
+```{r,fig.width=6,fig.height=5}
+pt=subset(srt,refind.type == 6 & patient != "BC01033")
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("refind.type","patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+#make pooled sce
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","refind.type")])
+
+volcano.ls=list()
+mds.ls=list()
+
+for (i in unique(pool$refind.type)) {
+  
+  y=pool[,pool$refind.type==i]
+  y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+  
+  #filtering 
+  keep=filterByExpr(y,group=y$samples$stage)
+  summary(keep)
+  y=y[keep, ,keep.lib.sizes=FALSE]
+  
+  #calculate normalization factors
+  y=calcNormFactors(y)
+  
+  #plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 cluster_id=as.character(y$samples$refind.type),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$stage)
+gg_df$group_id=factor(gg_df$group_id,levels=c("pre","post"))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+mds.ls[[i]]=ggplot(gg_df,aes(x,y,col=group_id,shape=patient_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c("orange","grey"))+
+    theme_bw()
+  
+  #make design
+  f1=factor(y$samples$stage,levels=c("pre","post"))
+  f2=y$samples$patient
+  design=model.matrix(~0+f1+f2)
+  colnames(design)=gsub("f\\d","",colnames(design))
+  
+  #make contrast
+  contr=makeContrasts(
+    post_vs_pre=post-pre,
+    levels=colnames(design)
+  )
+  
+  y=estimateDisp(y,design)
+  plotBCV(y)
+  
+  fit=glmFit(y,design)
+  lrt=glmLRT(fit,contrast=contr)
+  #fit <- glmQLFit(y,design)
+  #lrt <- glmQLFTest(fit,contrast=contr)
+  DEG=topTags(lrt,n=Inf)
+  
+  #the proportion of cell express this gene
+  df=DEG$table
+  ##pre percentage
+  pre.group=subset(pt,refind.type==i & stage=="pre")
+  pre.group=pre.group@assays$RNA@counts
+  df$pre.perc=rowSums(pre.group[rownames(df),]>0)/ncol(pre.group)
+  ##post persentage
+  post.group=subset(pt,refind.type==i & stage=="post")
+  post.group=post.group@assays$RNA@counts
+  df$post.prct=rowSums(post.group[rownames(df),]>0)/ncol(post.group)
+  
+  #save DGE list
+  write.csv(df,file=paste0("de_list/t_",i,".csv"))
+  
+  # make volcano plot
+  volcano.ls[[i]]=EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                #xlim=c(-3,3),
+                title = paste("DE gene in",i),
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                selectLab = rownames(df)[df$FDR <= 0.05],
+                labSize = 3,
+                legendPosition = NULL,
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                #widthConnectors = 0.75,
+                pCutoff = 0.05,
+                FCcutoff = 0.05)
+  
+  results=decideTests(lrt,p.value=0.05)
+  print(table(results))
+}
+```
+
+
+
+```{r,fig.width=10,fig.height=5}
+volcano.ls[[6]]
+```
+
+
+
+
+
+
+
+
+
+
+end

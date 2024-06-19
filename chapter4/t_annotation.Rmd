@@ -1,0 +1,239 @@
+---
+title: "t_annotation"
+author: "Hongke Peng"
+date: "30/12/2021"
+output: html_document
+---
+
+#load packages
+```{R}
+library(dplyr)
+library(ggsci)
+library(Seurat)
+library(ggplot2)
+```
+#load data
+```{r}
+t=readRDS("t_nk_cluster_figure/t_refined.rds")
+```
+
+#make umap
+```{r,fig.width=5,fig.height=5}
+DimPlot(t,reduction="wnn.umap",group.by="wsnn_res.0.4",label=T,label.box=T,label.color="white",pt.size=0.2,order=F,cols=c(pal_npg(alpha=0.6)(5),pal_nejm(alpha=0.6)(7)))+NoAxes()+NoLegend()
+```
+
+```{r,fig.width=5,fig.height=5}
+DimPlot(t,reduction="wnn.umap",group.by="patient",pt.size=0.2,order=F)+NoAxes()+NoLegend()
+```
+
+```{r,fig.width=10,fig.height=10}
+DefaultAssay(t)="DSB"
+prot_to_use=c("CD4-RPA-T4","CD8","TCR-Vd2","CD45RA","CD45RO","CD25","KLRG1-(MAFA)-SA231A2","CD62L","CD27.1")
+plot_ls=list()
+for (i in prot_to_use) {
+  plot_ls[[i]]=FeaturePlot(t,features=i,reduction="wnn.umap",min.cutoff="q2",max.cutoff="q98",cols=c("grey","darkgreen"),ncol=4,order=F)+NoAxes()+NoLegend()
+}
+gridExtra::grid.arrange(grobs=plot_ls,nrow=3)
+```
+
+
+```{r,fig.width=2.5,fig.height=2.5}
+c1=c("#9BCA3C","#5FB14E","#3BB846","#CADB73","#3B897C","#91D1C2FF","#A5D0F0","#E882B4","#A56AAC","#DCBFDD","#F055A3")
+DimPlot(t,group.by="refine.type",label=T,cols=c1,label.box=T,label.color="white") + NoLegend() + NoAxes() + ggtitle("T-cell subsets")
+ggsave("t_annotation/dimplot_refine_cluster.pdf",width=5,height=5)
+```
+
+#de analysis
+```{r,fig.width=5,fig.height=5}
+pt=subset(t,refine.type %in% 0:9)
+#make sce
+matr=pt@assays$RNA@counts
+#md=pt@meta.data[,c("harmony_t0_res.0.5","patient","stage")]
+md=pt@meta.data[,c("refine.type","patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+#pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","harmony_t0_res.0.5")])
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","refine.type")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:11765,retain:7267
+y=y[keep, ,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 cluster_id=y$samples$refine.type,
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$stage)
+gg_df$group_id=factor(gg_df$group_id,levels=c("pre","post"))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+ggplot(gg_df,aes(x,y,col=cluster_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+```
+
+```{r,fig.width=6,fig.height=5}
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("refine.type","patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+#make pooled sce
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","refine.type")])
+
+volcano.ls=list()
+mds.ls=list()
+
+for (i in unique(pool$refine.type)) {
+  
+  y=pool[,pool$refine.type==i]
+  y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+  
+  #filtering 
+  keep=filterByExpr(y,group=y$samples$stage)
+  summary(keep)
+  y=y[keep, ,keep.lib.sizes=FALSE]
+  
+  #calculate normalization factors
+  y=calcNormFactors(y)
+  
+  #plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 cluster_id=y$samples$refine.type,
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$stage)
+gg_df$group_id=factor(gg_df$group_id,levels=c("pre","post"))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+mds.ls[[i]]=ggplot(gg_df,aes(x,y,col=group_id,shape=patient_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c("orange","grey"))+
+    theme_bw()
+  
+  #make design
+  f1=factor(y$samples$stage,levels=c("pre","post"))
+  f2=y$samples$patient
+  design=model.matrix(~0+f1+f2)
+  colnames(design)=gsub("f\\d","",colnames(design))
+  
+  #make contrast
+  contr=makeContrasts(
+    post_vs_pre=post-pre,
+    levels=colnames(design)
+  )
+  
+  y=estimateDisp(y,design)
+  plotBCV(y)
+  
+  fit=glmFit(y,design)
+  lrt=glmLRT(fit,contrast=contr)
+  #fit <- glmQLFit(y,design)
+  #lrt <- glmQLFTest(fit,contrast=contr)
+  DEG=topTags(lrt,n=Inf)
+  
+  #the proportion of cell express this gene
+  df=DEG$table
+  ##pre percentage
+  pre.group=subset(pt,refine.type==i & stage=="pre")
+  pre.group=pre.group@assays$RNA@counts
+  df$pre.perc=rowSums(pre.group[rownames(df),]>0)/ncol(pre.group)
+  ##post persentage
+  post.group=subset(pt,refine.type==i & stage=="post")
+  post.group=post.group@assays$RNA@counts
+  df$post.prct=rowSums(post.group[rownames(df),]>0)/ncol(post.group)
+  
+  #save DGE list
+  #write.csv(df,file=paste0("../update_data/t_",i,"_de_list.csv"))
+  
+  # make volcano plot
+  volcano.ls[[i]]=EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                #xlim=c(-3,3),
+                title = paste("DE gene in",i),
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                selectLab = rownames(df)[df$FDR <= 0.05],
+                labSize = 3,
+                legendPosition = NULL,
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                #widthConnectors = 0.75,
+                pCutoff = 0.05,
+                FCcutoff = 0.05)
+  
+  results=decideTests(lrt,p.value=0.05)
+  print(table(results))
+}
+```
+
+```{r,fig.width=30,fig.height=12}
+gridExtra::grid.arrange(grobs=volcano.ls,ncol=4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+end

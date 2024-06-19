@@ -1,0 +1,1201 @@
+---
+title: "thesis figures"
+author: "Hongke Peng"
+date: "2023-03-03"
+output: html_document
+---
+
+#load packages
+```{R}
+#library(tidyr)
+library(dsb)
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(harmony)
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+#library(batchelor)
+library(ggplot2)
+library(DropletUtils)
+```
+
+#figure 1: annotation
+```{r,fig.width=5,fig.height=5}
+srt=readRDS("for_paper_data/srt_refine.rds")
+#make mono cluster
+srt$refind.type=0
+#make cd4 t cluster
+srt$refind.type[srt$wsnn_res.0.6==5]=1
+srt$refind.type[srt$wsnn_res.0.6==6]=2
+srt$refind.type[srt$wsnn_res.0.6==2]=3
+srt$refind.type[srt$wsnn_res.0.6==1]=4
+srt$refind.type[srt$wsnn_res.0.6==18]=5
+srt$refind.type[srt$wsnn_res.0.6==16]=6
+#make gd t cluster
+srt$refind.type[srt$wsnn_res.0.6==15]=7
+srt$refind.type[srt$wsnn_res.0.6==13]=8
+srt$refind.type[srt$wsnn_res.0.6==10]=9
+srt$refind.type[srt$wsnn_res.0.6%in%c(4,17,20)]=10
+#leave cluster 11 for nk-T
+#make b cluster
+srt$refind.type[srt$wsnn_res.0.6==9]=12
+srt$refind.type[srt$wsnn_res.0.6==3]=13
+srt$refind.type[srt$wsnn_res.0.6==8]=14
+srt$refind.type[srt$wsnn_res.0.6==14]=15
+#make nk cluster
+srt$refind.type[srt$wsnn_res.0.6==11]=16
+srt$refind.type[srt$wsnn_res.0.6%in%c(0,19,24)]=17
+
+#make nk-T cluster
+DimPlot(srt,reduction="wnn.umap",group.by="wsnn_res.1.2",label=T) + ggtitle(NULL) + xlab("UMAP_1") + ylab("UMAP_2")
+nkt.name=colnames(srt)[srt$wsnn_res.1.2==32]
+srt$refind.type[colnames(srt)%in%nkt.name]=11
+```
+
+```{r, fig.width=5, fig.height=5}
+colorset=c("darkgrey",#mono
+           "#9BCA3C","#5FB14E","#91D1C2FF","#CADB73","#3B897C","#3BB846","#A5D0F0","#E882B4","#A56AAC","#DCBFDD","#F055A3",#t cluster
+           "#4DBBD57F","#77B3D9","#D99ACE","#528DD9",#b cluster
+           "#FF8F40","#FFAD73")
+DimPlot(srt,reduction="wnn.umap",group.by="refind.type",cols=colorset,label=T,label.box=T,label.color="white",label.size=5, raster = T) + NoLegend() + ggtitle(NULL) + xlab("UMAP_1") + ylab("UMAP_2")
+ggsave("thesis_fig/umap.pdf",width=5,height=5)
+```
+
+```{r, fig.width=6, fig.height=6}
+colorset=c("darkgrey",#mono
+           "#9BCA3C","#5FB14E","#91D1C2FF","#CADB73","#3B897C","#3BB846","#A5D0F0","#E882B4","#A56AAC","#DCBFDD","#F055A3",#t cluster
+           "#4DBBD57F","#77B3D9","#D99ACE","#528DD9",#b cluster
+           "#FF8F40","#FFAD73")
+DimPlot(srt,reduction="wnn.umap",group.by="refind.type",cols=colorset,label=T,label.size=7, raster = T) + NoLegend() + ggtitle(NULL) + xlab("UMAP_1") + ylab("UMAP_2") 
+```
+
+```{r, fig.width=8, fig.height=4.5}
+plot_ls <- list()
+for (i in c("RNA.weight", "DSB.weight")) {
+   plot_ls[[i]] <- VlnPlot(srt, group.by = "refind.type", cols = colorset, features = i, pt.size = 0, ncol = 1) + 
+     NoLegend() + 
+     xlab(NULL)
+}
+pdf("thesis_fig/rna.weight.pdf", width = 8, height = 4.5)
+gridExtra::grid.arrange(grobs = plot_ls, ncol = 1)
+dev.off()
+```
+
+
+```{r, fig.width=4, fig.height=7}
+anno_gene <- c("CD14", "CD3E", "CD4", "CD8A", "SELL", "FOXP3", "CTLA4", "GZMB", "GZMK", "PRF1","MS4A1", "TCL1A", "NCAM1")
+anno_gene_list <- list()
+for(i in anno_gene){
+  anno_gene_list[[i]] <- VlnPlot(srt, features = i, group.by = "refind.type", cols = colorset, pt.size = 0, ncol = 1) + 
+    ggtitle(NULL) + 
+    NoLegend() +
+    xlab(NULL) +
+    ylab(NULL) + 
+    theme(axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 7))
+}
+pdf("thesis_fig/anno_gene.pdf", width = 4, height = 8)
+gridExtra::grid.arrange(grobs = anno_gene_list, ncol = 1)
+dev.off()
+```
+
+#figure 2
+```{r, fig.width=10, fig.height=8}
+plot_ls <- list()
+for(i in unique(srt$patient)){
+  x <- subset(srt, patient == i)
+  x$stage <- factor(x$stage, levels = c("pre", "post"))
+  plot_ls[[i]] <- DimPlot(x, reduction = "wnn.umap", group.by = "refind.type", cols = colorset, split.by = "stage", raster = T) + 
+    NoLegend() +
+    NoAxes() + 
+    ggtitle(i)
+}
+pdf("thesis_fig/umap_split_pt_stage.pdf", width = 10, height = 8)
+gridExtra::grid.arrange(grobs = plot_ls, ncol = 2)
+dev.off()
+```
+
+```{r, fig.width=5, fig.height=2}
+pt=subset(srt,refind.type %in% c(12,13,14,15))
+b_de_df=table(pt$patient,pt$stage) %>% as.data.frame()
+colnames(b_de_df)=c("patient","stage","ncell")
+b_de_df$stage=factor(b_de_df$stage,levels=c("pre","post"))
+b_de_df
+
+ggplot(b_de_df,aes(x=patient,y=ncell,fill=stage)) + 
+  geom_col(position="dodge") +
+  theme_classic() + 
+  scale_fill_manual(values=ggsci::pal_npg(alpha=0.6)(2)[2:1]) +
+  xlab(NULL) + 
+  ylab("B cell numbers") +
+  theme(axis.text.y=element_text(size=11),
+        axis.text.x=element_text(size=10, face = "bold")) #+ 
+  #geom_text(aes(label=ncell,y=ncell+100),position=position_dodge(0.9),size=4.5)
+ggsave("thesis_fig/b_cell_num.pdf", width = 5, height = 2)
+
+pt=subset(srt,refind.type %in% c(12,13,14,15))
+df <- table(pt$refind.type, pt$stage) %>% as.data.frame()
+colnames(df) <- c("cluster", "stage", "nCell")
+df$stage <- factor(df$stage, levels = c("pre", "post"))
+ggplot(df, aes(x = cluster, y = nCell, fill = stage)) + 
+  geom_col(position = "dodge") + 
+  scale_fill_manual(values=ggsci::pal_npg(alpha=0.6)(2)[2:1]) +
+  xlab("B cell clusters") + 
+  theme_classic() + 
+  theme(axis.text.y=element_text(size=11),
+        axis.text.x=element_text(size=10, face = "bold"))
+ggsave("thesis_fig/b_cell_num_in_clusters.pdf", width = 5, height = 2)
+```
+
+
+```{r, fig.width=18, fig.height=8}
+pt <- subset(srt, refind.type %in% c(1:11, 16, 17))
+pt$sample <- paste(pt$patient, pt$stage, sep="_")
+df <- table(pt$sample, pt$refind.type) %>% as.data.frame()
+colnames(df) <- c("sample", "cluster", "nCell")
+df$patient <- sapply(strsplit(as.character(df$sample), "_"), function(x){x[1]})
+df$stage <- sapply(strsplit(as.character(df$sample), "_"), function(x){x[2]})
+df$stage <- factor(df$stage, levels = c("pre", "post"))
+
+ggplot(df, aes(x = patient, y = nCell, fill = stage)) + 
+  geom_col(position = "dodge", width = 0.7, color = "white") + 
+  scale_fill_manual(values=ggsci::pal_npg(alpha=0.6)(2)[2:1]) + 
+  facet_wrap(~cluster) +
+  theme_bw() +
+  xlab(NULL) + 
+  ylab(NULL)
+ggsave("thesis_fig/cell_composition.pdf", width = 18, height = 8)
+```
+
+# B cell DE analysis
+```{r,fig.width=6,fig.height=5}
+library(SingleCellExperiment)
+library(edgeR)
+
+pt=subset(srt,refind.type %in% c(12,13,14))
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+y$samples$stage=factor(y$samples$stage,levels=c("pre","post"))
+  
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)
+y=y[keep, ,keep.lib.sizes=FALSE]
+  
+#calculate normalization factors
+y=calcNormFactors(y)
+  
+# plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                patient_id=y$samples$patient,
+                group_id=y$samples$stage)
+
+ggplot(gg_df,aes(x,y,col=group_id))+
+  geom_point(size=5)+
+  scale_color_manual(values=ggsci::pal_npg(alpha=0.6)(2)[2:1]) +
+  geom_text(aes(label=patient_id,y=y+0.05),position=position_dodge(0.8),size=5, color="black") +
+  labs(x="MDS dim.1",y="MDS dim2")+
+  theme_bw() +
+  theme(panel.grid.minor=element_blank())
+ggsave("thesis_fig/b_cell_mds.pdf", width = 6, height = 5)
+```
+
+```{r}
+#make design
+f1=factor(y$samples$stage,levels=c("pre","post"))
+f2=y$samples$patient
+design=model.matrix(~0+f1+f2)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  post_vs_pre=post-pre,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit <- glmQLFit(y,design)
+#lrt <- glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+##pre percentage
+pre.group=subset(pt,stage=="pre")
+pre.group=pre.group@assays$RNA@counts
+df$pre.perc=rowSums(pre.group[rownames(df),]>0)/ncol(pre.group)
+##post persentage
+post.group=subset(pt,stage=="post")
+post.group=post.group@assays$RNA@counts
+df$post.prct=rowSums(post.group[rownames(df),]>0)/ncol(post.group)
+table(decideTests(lrt,p.value=0.05))
+#save DGE list
+write.csv(df,file="thesis_fig/deg_edgeR_b_c12_13_14.csv")
+```
+
+
+```{r,fig.width=5,fig.height=5}
+df <- read.csv("thesis_fig/deg_edgeR_b_c12_13_14.csv")
+volcano.lab=unlist(strsplit("S100A4/S100A8/LY96/NEK6/TRAF1/CST3/CNTNAP2/MGLL","/"))
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=df$X,
+                ylim=c(0,15),
+                xlim=c(-4,4),
+                title = "differentially expressed gene in C12,13,14",
+                subtitle = paste0('FDR cutoff = 0.05', ", logFC cutoff = 0.5"),
+                #selectLab = volcano.lab,
+                labSize = 4,
+                boxedLabels = T,
+                legendPosition = 'top',
+                legendLabSize = 10,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 0.5,
+                pCutoff = 0.05,
+                FCcutoff = 0.5,
+                maxoverlapsConnectors=30,
+                #labCol = 'black',
+                #labFace = 'bold', 
+                raster = T
+                ) + 
+  ggtitle(NULL) + 
+  theme(axis.text.x = element_text(size = 17),
+        axis.text.y = element_text(size = 17),)
+ggsave("thesis_fig/volcano_b_cluster_5pt_labeled.pdf",width=8,height=8)
+```
+
+###go analysis
+```{r,fig.width=10,fig.height=3}
+#up=df[df$FDR<0.05&df$logFC>0&(df$post.prct>0.1|df$pre.perc >0.1),]
+#up=df[df$FDR<0.05&df$logFC>0,][1:30, ]
+up=df[df$FDR<0.05&df$logFC>0,][1:30, ]
+go.up=enrichGO(gene=up$X,
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               #minGSSize=250,
+               #maxGSSize=300,
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+
+paletteLength <- 50
+myColor=colorRampPalette(c("grey20","grey20"))(paletteLength)
+
+barplot(go.up,showCategory=15,x="GeneRatio") + 
+  #scale_fill_material("blue-grey",reverse=T,limits=c(0.2,1)) + 
+  ggtitle("enriched pathway in C12, C13 and C14 after VEN treatment") + 
+  theme(axis.text.y=element_text(face="bold",size=10,color="grey20")) + 
+  NoLegend()
+ggsave("make_figures_for_paper_folder/barplot_enriched_pathway_5pt.pdf",width=10,height=3)
+```
+
+###GSEA
+```{r, fig.width=10, fig.height=3}
+library(msigdbr)
+#prepare gene set collection ----
+all_gene_set <- data.frame()
+##C2 canonical pathway
+for (i in c("CP:BIOCARTA", "CP:KEGG", "CP:REACTOME", "CP:WIKIPATHWAYS", "CP:PID")) {
+  mtx <- msigdbr(species = "Homo sapiens",category = "C2",subcategory = i)
+  mtx <- as.data.frame(mtx)
+  all_gene_set <- rbind(all_gene_set, mtx)
+}
+##go BP
+#mtx <- msigdbr(species = "Homo sapiens",category = "C5",subcategory = "GO:BP")
+#mtx <- as.data.frame(mtx)
+#all_gene_set <- rbind(all_gene_set, mtx)
+##Hallmark
+mtx <- msigdbr(species = "Homo sapiens",category = "H")
+mtx <- as.data.frame(mtx)
+all_gene_set <- rbind(all_gene_set, mtx)
+
+gmt <- data.frame(term = all_gene_set$gs_name, 
+                  gene = all_gene_set$entrez_gene)
+
+df$gene=df$X
+
+id=bitr(df$gene,"SYMBOL","ENTREZID","org.Hs.eg.db") #5.38% of input gene IDs are fail to map...
+#make geneList
+marker=merge(df,id,by.x="gene",by.y="SYMBOL")
+marker=data.frame(logFC=marker$logFC,SYMBOL=marker$ENTREZID)
+geneList=marker$logFC
+names(geneList)=marker$SYMBOL
+geneList=sort(geneList,decreasing=T)
+
+gsea.result <- GSEA(geneList, TERM2GENE = gmt, seed = T, pvalueCutoff = 0.05, pAdjustMethod = "BH")
+
+#make plot
+# gsea.df <- gsea.result@result
+# gsea.df <- gsea.df[order(gsea.df$qvalue, decreasing = F), ]
+# gsea.df$category <- sapply(strsplit(rownames(gsea.df), "_"), function(x){x[1]})
+# gsea.df$Description <- tolower(gsea.df$Description)
+# HM <- gsea.df[gsea.df$category == "HALLMARK", ][1:5, ]
+# KG <- gsea.df[gsea.df$category == "KEGG", ][1:5, ]
+# WP <- gsea.df[gsea.df$category == "WP", ][1:5, ]
+# RT <- gsea.df[gsea.df$category == "REACTOME", ][1:5, ]
+# plot.df <- rbind(HM, KG, WP)
+# #plot.df$Description <- factor(plot.df$Description, levels = plot.df$Description)
+# p1 <- ggplot(HM, aes(x = Description, y = NES)) + 
+#   geom_col(width = 0.8) + 
+#   xlab(NULL) +
+#   ylab(NULL) +
+#   coord_flip() +
+#   theme_bw() +
+#   #scale_x_discrete(position = "top") +
+#   theme(axis.text.y = element_text(size = 15),
+#         axis.text.x = element_text(size = 12))
+# p2 <- ggplot(KG, aes(x = Description, y = NES)) + 
+#   geom_col(width = 0.8) + 
+#   coord_flip() +
+#   xlab(NULL) +
+#   ylab(NULL) +
+#   theme_bw() +
+#   #scale_x_discrete(position = "top") +
+#   theme(axis.text.y = element_text(size = 15),
+#         axis.text.x = element_text(size = 12))
+# p3 <- ggplot(WP, aes(x = Description, y = NES)) + 
+#   geom_col(width = 0.8) + 
+#   coord_flip() +
+#   xlab(NULL) +
+#   ylab("Normalized Enrichment Score") +
+#   theme_bw() +
+#   #scale_x_discrete(position = "top") +
+#   theme(axis.text.y = element_text(size = 15),
+#         axis.text.x = element_text(size = 12))
+# p <- p1/p2/p3
+# p
+gsea.df <- gsea.result@result
+gsea.df <- gsea.df[grepl("HALLMARK_", gsea.df$ID), ]
+gsea.df <- gsea.df[order(gsea.df$qvalue, decreasing = F), ]
+gsea.df <- gsea.df[1:5, ]
+ggplot(gsea.df, aes(x = Description, y = NES)) + 
+  geom_col(width = 0.8) +
+  xlab(NULL) +
+  ylab(NULL) +
+  coord_flip() +
+  theme_bw() +
+  #scale_x_discrete(position = "top") +
+  theme(axis.text.y = element_text(size = 15),
+        axis.text.x = element_text(size = 12))
+ggsave("make_figures_for_paper_folder/barplot_hallmark_gsea_5pt.pdf",width=10,height=3)
+```
+###progeny
+
+```{r, fig.width=10, fig.height=6}
+library(progeny)
+DefaultAssay(pt) <- "RNA"
+pt <- progeny(pt, return_assay = T, top = 100)
+DefaultAssay(pt) <- "progeny"
+pt$stage <- factor(pt$stage, levels = c("pre","post"))
+p1 <- VlnPlot(pt, features = "TNFa", group.by = "patient", split.by = "stage", pt.size = 0)
+p2 <- VlnPlot(pt, features = "NFkB", group.by = "patient", split.by = "stage", pt.size = 0)
+p <- p1 / p2
+p
+ggsave("make_figures_for_paper_folder/nfkb_progeny.pdf",width=10,height=6)
+#VlnPlot(pt, features = rownames(pt), group.by = "stage", pt.size = 0)
+```
+
+
+
+
+
+```{r,fig.width=12,fig.height=8}
+plot.ls=list()
+for (i in 1:18) {
+  j=i-1
+  #make matrix
+  df=srt@assays$RNA@data[c("BCL2","BCL2A1", "MCL1", "BCL2L1","PMAIP1", "BBC3", "BAD", "BCL2L11","BID","BAX","BAK1"),srt$refind.type==j] %>% as.data.frame()
+  #df=srt@assays$RNA@data[c("BCL2","BCL2A1", "MCL1", "BCL2L1"),srt$refind.type==j] %>% as.data.frame()
+  #df=srt@assays$RNA@data[c("PMAIP1","BBC3","BAD","BCL2L11","BID","BAX","BAK1"),srt$refind.type==j] %>% as.data.frame()
+  df=t(df) %>% as.data.frame()
+  df$stage="post"
+  df$stage[grepl("C1D1",rownames(df))]="pre"
+  #make lond data
+  long_df=tidyr::gather(df,gene,expression,BCL2:BAK1)
+  #long_df=tidyr::gather(df,gene,expression,PMAIP1:BAK1)
+  long_df$gene=factor(long_df$gene,levels=c("BCL2","BCL2A1", "MCL1", "BCL2L1","PMAIP1", "BBC3", "BAD", "BCL2L11","BID","BAX","BAK1"))
+  #long_df$gene=factor(long_df$gene,levels=c("PMAIP1","BBC3","BAD","BCL2L11","BID","BAX","BAK1"))
+  long_df$stage=factor(long_df$stage,levels=c("pre","post"))
+  #make color for violin plot
+  c1=colorset[i]
+  c2=adjustcolor(c1,0.2)
+  plot.ls[[i]]=ggplot(long_df,aes(x=gene,y=expression,fill=stage)) + 
+                      geom_violin(scale="width",trim=T,color="black") +
+                      xlab(NULL) + 
+                      ylab(NULL) + 
+                      ylim(c(0,4)) + 
+                      #ggtitle(paste("cluster",j,sep=" ")) +x
+                      theme(axis.ticks.x = element_blank(),
+                            legend.position = 'right', 
+                            #axis.text.x = element_blank(),
+                            axis.text.y = element_text(size=7),
+                            #panel.spacing = unit(x = 0, units = 'lines'),panel.spacing.y = unit(0, "lines"),
+                            axis.text.x = element_blank(),
+                            axis.line = element_blank(),
+                            panel.background = element_rect(fill=NA,color='black'),
+                            #plot.title = element_text(vjust = -7.8, hjust = 0.99),
+                            plot.margin = margin(0,0,0,0, "cm")) +
+                      scale_fill_manual(values=c(c2,c1)) + 
+                      NoLegend()
+}
+#pdf("make_figures_for_paper_folder/vlnplot_bl2_family.pdf",width=12,height=14,bg="transparent")
+pdf("thesis_fig/vlnplot_pro_survival.pdf",width=12,height=8,bg="transparent")
+gridExtra::grid.arrange(grobs=plot.ls,ncol=1)
+dev.off()
+```
+
+#figure 3
+
+###filtered mds plot
+```{r,fig.width=16,fig.height=8}
+pt=subset(srt,refind.type %in% c(1:10,16,17))
+pt=pt[,pt$patient!="BC01033" | pt$refind.type!=6]
+
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("refind.type","patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","refind.type")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:11765,retain:7267
+y=y[keep, ,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 cluster_id=as.character(y$samples$refind.type),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$stage)
+gg_df$group_id=factor(gg_df$group_id,levels=c("pre","post"))
+gg_df$cluster_id=factor(gg_df$cluster_id,levels=c(1:10,16,17))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+a=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=3,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    ggtitle("MDS plot, colored by patients")+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=ggsci::pal_npg(alpha=0.8)(5))+
+    geom_text(aes(label=cluster_id),color="black",size=2) +
+    theme_bw()
+
+b=ggplot(gg_df,aes(x,y,col=cluster_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #ylim(c(-1.5,1)) + 
+    #coord_fixed()+
+    ggtitle("MDS plot, colored by clusters")+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=colorset[c(2:11,17,18)])+
+    #geom_text(aes(label=cluster_id),color="black",size=2) + 
+    theme_bw()
+ab=a+b
+ab
+ggsave(ab,filename="make_figures_for_paper_folder/scatterplot_after_filered_mds.pdf",width=12,height=5)
+```
+###filtered mds plot
+```{r,fig.width=6,fig.height=5}
+pt=subset(srt,refind.type %in% c(1:10))
+#pt=pt[,pt$patient!="BC01033" | pt$refind.type!=6]
+
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("refind.type","patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","refind.type")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:11765,retain:7267
+y=y[keep, ,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 cluster_id=as.character(y$samples$refind.type),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$stage)
+gg_df$group_id=factor(gg_df$group_id,levels=c("pre","post"))
+gg_df$cluster_id=factor(gg_df$cluster_id,levels=c(1:10,16,17))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+a=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=3,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    ggtitle("MDS plot, colored by patients")+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=ggsci::pal_npg(alpha=0.8)(5))+
+    geom_text(aes(label=cluster_id),color="black",size=2) +
+    theme_bw()
+
+ggplot(gg_df,aes(x,y,col=cluster_id,shape=group_id))+
+    geom_point(size=3,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #ylim(c(-1.5,1)) + 
+    #coord_fixed()+
+    ggtitle("MDS plot, colored by clusters")+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=colorset[c(2:11,17,18)])+
+    #geom_text(aes(label=cluster_id),color="black",size=2) + 
+    theme_bw()
+
+ggsave("thesis_fig/scatterplot_unfiltered_T_mds.pdf",width=6,height=5)
+```
+
+```{r, fig.width=8, fig.height=8}
+ggplot(gg_df,aes(x,y,col=cluster_id,shape=group_id))+
+    geom_point(size=5)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #ylim(c(-1.5,1)) + 
+    #coord_fixed()+
+    ggtitle("MDS plot: T-cell and NK-cell clusters") +
+    scale_color_manual(values=colorset[c(2:11,17,18)])+
+    #geom_text(aes(label=cluster_id),color="black",size=2) + 
+    theme_bw()
+ggsave("thesis_fig/mds_all_cell.pdf", width = 8, height = 8)
+```
+
+
+#QC
+##filter out low quatily cells
+load in raw data
+```{R}
+# make pathway
+sample.id=list.files("/stornext/Genomics/data/CLL_venetoclax/single_cell_data/breast_cancer/matrix/")
+sample.id=sample.id[-c(1:2,17,23:29)] # exclude 10129_C25D1_GEX20
+
+sample.ls=list()
+for (i in sample.id) {
+  sample.ls[[i]]=paste0("/stornext/Genomics/data/CLL_venetoclax/single_cell_data/breast_cancer/matrix/",i,"/outs/filtered_feature_bc_matrix")
+}
+# read in data
+sce=read10xCounts(samples = sample.ls, sample.names = names(sample.ls))
+colnames(sce)=paste0(sce$Sample, "_", sce$Barcode)
+sce=splitAltExps(sce, rowData(sce)$Type)
+counts(altExp(sce))=as.matrix(counts(altExp(sce)))
+rownames(sce)=rowData(sce)$Symbol
+#sce$patient <- sapply(strsplit(sce$Sample, "_"), function(x){x[1]})
+```
+
+
+```{R,fig.width = 17,fig.height = 3}
+# find outliers in gene expression, >= 3*mad
+# by batch
+sce <- addPerCellQC(sce, subsets=list(Mito=grep("^MT-",rowData(sce)$Symbol)))
+qc.sum <- isOutlier(sce$sum, log = TRUE, type = "both", batch = sce$Sample)
+qc.detected <- isOutlier(sce$detected, log = TRUE, type = "both", batch = sce$Sample)
+qc.mito <- isOutlier(sce$subsets_Mito_percent, type = "higher", batch = sce$Sample)
+sce$discard <- qc.sum | qc.detected | qc.mito
+
+pdf("thesis_fig/vlnplot_rna_qc.png",width=17,height=4)
+gridExtra::grid.arrange(
+plotColData(sce, x = "Sample", y = "sum", colour_by = "discard") +
+  scale_y_log10() + 
+  ylab("Total UMIs") + 
+  xlab(NULL) +
+  NoLegend() + 
+  theme(axis.text.x  = element_text(angle=30, vjust=1, hjust=1, size = 5)), 
+
+plotColData(sce, x = "Sample", y = "detected", colour_by = "discard") +
+  ylab("Detected features") + 
+  NoLegend() +
+  xlab(NULL) +
+  theme(axis.text.x  = element_text(angle=30, vjust=1, hjust=1, size = 5)),
+
+plotColData(sce, x = "Sample", y = "subsets_Mito_percent", colour_by = "discard") + 
+  ylab("Mito genes expression %") + 
+  xlab(NULL) +
+  NoLegend() +
+  theme(axis.text.x  = element_text(angle=30, vjust=1, hjust=1, size = 5)),
+ncol = 3
+)
+dev.off()
+```
+
+
+
+```{R,fig.width = 17,fig.height = 5}
+# find outliers in gene expression, >= 3*mad
+# by batch
+sce <- addPerCellQC(sce, subsets=list(Mito=grep("^MT-",rowData(sce)$Symbol)))
+qc.sum <- isOutlier(sce$sum, log = TRUE, type = "both", batch = sce$Sample)
+qc.detected <- isOutlier(sce$detected, log = TRUE, type = "both", batch = sce$Sample)
+qc.mito <- isOutlier(sce$subsets_Mito_percent, type = "higher", batch = sce$Sample)
+sce$discard <- qc.sum | qc.detected | qc.mito
+
+pdf("thesis_fig/vlnplot_rna_qc.png",width=17,height=4)
+gridExtra::grid.arrange(
+plotColData(sce, y = "sum", colour_by = "discard") +
+  scale_y_log10() + 
+  ylab("Total UMIs") + 
+  xlab(NULL) +
+  theme_bw() +
+  NoLegend() + 
+  theme(axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size = 20), axis.title.y = element_text(size = 25)), 
+
+plotColData(sce, y = "detected", colour_by = "discard") +
+  ylab("Detected features") + 
+  xlab(NULL) +
+  theme_bw() +
+  NoLegend() +
+  theme(axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size = 20), axis.title.y = element_text(size = 25)),
+
+plotColData(sce, y = "subsets_Mito_percent", colour_by = "discard") + 
+  ylab("Mito genes expression %") + 
+  xlab(NULL) +
+  theme_bw() +
+  NoLegend() +
+  theme(axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size = 20), axis.title.y = element_text(size = 25)),
+ncol = 3
+)
+dev.off()
+```
+
+#figure3
+```{r,fig.width=5,fig.height=5}
+srt <- readRDS("overall_umap_figure/first_clustered_srt.rds")
+DimPlot(srt,reduction="harmonyUMAP",label=T,label.size = 7,cols=dittoColors(),raster=T) + NoLegend()
+ggsave("thesis_fig/umap_qc.pdf", width = 5, height = 5)
+```
+
+```{r,fig.width=15,fig.height=5}
+VlnPlot(srt,features=c("nCount_RNA","nFeature_RNA","percent.mt","S.Score"),pt.size=0,ncol=2,cols=dittoColors())
+ggsave("thesis_fig/vlnplot_basis.pdf",width=12,heigh=5)
+```
+
+```{r}
+sce$combine_sample <- sapply(strsplit(sce$Sample, "_"), function(x){paste(x[1], x[2], sep = "_")})
+srt$combine_sample <- sapply(strsplit(srt$Sample, "_"), function(x){paste(x[1], x[2], sep = "_")})
+
+qc_df <- table(sce$discard, sce$combine_sample) %>% as.data.frame()
+colnames(qc_df) <- c("category", "sample", "nCell")
+
+raw_df <- qc_df[qc_df$category == TRUE, ]
+raw_df$category <- "after_qc_1"
+  
+after_qc_1 <- qc_df[qc_df$category == FALSE, ]
+after_qc_1$category <- "after_qc_2"
+
+final_df <- data.frame(table(srt$combine_sample))
+colnames(final_df) <- c("sample", "nCell")
+final_df$category <- "cell_left"
+
+after_qc_1$nCell <- after_qc_1$nCell - final_df$nCell
+
+
+df <- rbind(raw_df, after_qc_1, final_df)
+ggplot(df, aes(x = sample, y = nCell, fill = category, color = category)) + 
+  geom_col(width = 0.7) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12)) + 
+  scale_fill_manual(values = c("grey80", "orange", "grey20")) +
+  scale_color_manual(values = c("grey80", "orange", "grey20")) +
+  xlab(NULL) +
+  ylab("Number of Cells in dataset")
+ggsave("thesis_fig/rm_cell.pdf", width = 7, height = 7)
+```
+
+#DEPs
+##NK
+###filtered mds plot
+```{r,fig.width=6,fig.height=5}
+pt=subset(srt,refind.type %in% c(1:10))
+pt=pt[,pt$patient!="BC01033" | pt$refind.type!=6]
+
+#make sce
+matr=pt@assays$ADT@counts
+md=pt@meta.data[,c("refind.type","patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient","refind.type")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:11765,retain:7267
+y=y[keep, ,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 cluster_id=as.character(y$samples$refind.type),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$stage)
+gg_df$group_id=factor(gg_df$group_id,levels=c("pre","post"))
+gg_df$cluster_id=factor(gg_df$cluster_id,levels=c(1:10,16,17))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+a=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=3,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    ggtitle("MDS plot, colored by patients")+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=ggsci::pal_npg(alpha=0.8)(5))+
+    geom_text(aes(label=cluster_id),color="black",size=2) +
+    theme_bw()
+
+ggplot(gg_df,aes(x,y,col=cluster_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #ylim(c(-1.5,1)) + 
+    #coord_fixed()+
+    ggtitle("MDS plot, colored by clusters")+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=colorset[c(2:11, 17,18)])+
+    #geom_text(aes(label=cluster_id),color="black",size=2) + 
+    theme_bw()
+ggsave("thesis_fig/prot_mds_T_cells.pdf",width=6,height=5)
+```
+
+## B cell DEP
+```{r,fig.width=6,fig.height=5}
+library(SingleCellExperiment)
+library(edgeR)
+
+pt=subset(srt,refind.type %in% c(12, 13, 14))
+#make sce
+matr=pt@assays$ADT@data
+md=pt@meta.data[,c("patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+y$samples$stage=factor(y$samples$stage,levels=c("pre","post"))
+  
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)
+y=y[keep, ,keep.lib.sizes=FALSE]
+  
+#calculate normalization factors
+y=calcNormFactors(y)
+  
+# plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                patient_id=y$samples$patient,
+                group_id=y$samples$stage)
+
+ggplot(gg_df,aes(x,y,col=group_id))+
+  geom_point(size=5)+
+  scale_color_manual(values=ggsci::pal_npg(alpha=0.6)(2)[2:1]) +
+  geom_text(aes(label=patient_id,y=y+0.05),position=position_dodge(0.8),size=5, color="black") +
+  labs(x="MDS dim.1",y="MDS dim2")+
+  theme_bw() +
+  theme(panel.grid.minor=element_blank())
+ggsave("thesis_fig/b_cell_ADT_mds.pdf", width = 6, height = 5)
+```
+
+```{r}
+#make design
+f1=factor(y$samples$stage,levels=c("pre","post"))
+f2=y$samples$patient
+design=model.matrix(~0+f1+f2)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  post_vs_pre=post-pre,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit <- glmQLFit(y,design)
+#lrt <- glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+##pre percentage
+pre.group=subset(pt,stage=="pre")
+pre.group=pre.group@assays$ADT@counts
+df$pre.perc=rowSums(pre.group[rownames(df),]>0)/ncol(pre.group)
+##post persentage
+post.group=subset(pt,stage=="post")
+post.group=post.group@assays$ADT@counts
+df$post.prct=rowSums(post.group[rownames(df),]>0)/ncol(post.group)
+table(decideTests(lrt,p.value=0.05))
+df$gene <- rownames(df)
+#save DGE list
+#write.csv(df,file="thesis_fig/dep_edgeR_T_C17.csv")
+
+#rm all ADT < Ctrl
+ctrl_df <- df[grep("Ctrl", df$gene), ]
+df <- df[df$logCPM >= mean(ctrl_df$logCPM), ]
+
+```
+
+
+```{r,fig.width=8,fig.height=8}
+volcano.lab=unlist(strsplit("S100A4/S100A8/LY96/NEK6/TRAF1/CST3/CNTNAP2/MGLL","/"))
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                ylim=c(0,15),
+                xlim=c(-1,1),
+                title = "differentially expressed gene in C17",
+                subtitle = paste0('FDR cutoff = 0.05', ", logFC cutoff = 0.5"),
+                #selectLab = volcano.lab,
+                labSize = 4,
+                boxedLabels = F,
+                legendPosition = 'top',
+                legendLabSize = 10,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 0.5,
+                pCutoff = 0.05,
+                FCcutoff = 0,
+                maxoverlapsConnectors=10,
+                #labCol = 'black',
+                #labFace = 'bold', 
+                raster = T
+                ) + 
+  ggtitle(NULL) + 
+  theme(axis.text.x = element_text(size = 17),
+        axis.text.y = element_text(size = 17),)
+ggsave("thesis_fig/volcano_B_protein.pdf",width=6,height=6)
+```
+
+
+```{r, fig.width=12.5, fig.height=10}
+DefaultAssay(pt) <- "DSB"
+show_prot <- rownames(df)[df$FDR < 0.05 & df$logFC > 0]
+rownames(pt)[grep("CD33", rownames(pt))]
+pt$stage <- factor(pt$stage, levels = c("pre", "post"))
+more_prot <- c("CD86.1")
+VlnPlot(pt, features = c(rownames(matr)[grep("Ctrl", rownames(matr))][1], show_prot, more_prot), assay = "DSB", group.by = "stage", pt.size = 0, cols = ggsci::pal_npg(alpha=0.6)(2)[2:1], ncol = 5)
+ggsave("thesis_fig/vlnplot_B_protein_up.pdf", width = 12.5, height = 10/3)
+```
+
+```{r, fig.width=12.5, fig.height=10}
+DefaultAssay(pt) <- "DSB"
+show_prot <- rownames(df)[df$FDR < 0.05 & df$logFC < 0]
+show_prot <- show_prot[-c(7, 8)]
+rownames(pt)[grep("CD33", rownames(pt))]
+pt$stage <- factor(pt$stage, levels = c("pre", "post"))
+more_prot <- c("CD19.1", "CD40.1", "CD47.1")
+VlnPlot(pt, features = c(rownames(matr)[grep("Ctrl", rownames(matr))][1], show_prot, more_prot), assay = "DSB", group.by = "stage", pt.size = 0, cols = ggsci::pal_npg(alpha=0.6)(2)[2:1], ncol = 5)
+ggsave("thesis_fig/vlnplot_B_protein_dw.pdf", width = 12.5, height = 10)
+```
+
+
+```{r}
+VlnPlot(pt, features = c(rownames(matr)[grep("CD73", rownames(matr))]), assay = "DSB", split.by = "stage", pt.size = 0, group.by = "patient")
+```
+## NK cell DEP
+```{r,fig.width=6,fig.height=5}
+library(SingleCellExperiment)
+library(edgeR)
+
+pt=subset(srt,refind.type %in% c(16))
+#make sce
+matr=pt@assays$ADT@data
+md=pt@meta.data[,c("patient","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+y$samples$stage=factor(y$samples$stage,levels=c("pre","post"))
+  
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)
+y=y[keep, ,keep.lib.sizes=FALSE]
+  
+#calculate normalization factors
+y=calcNormFactors(y)
+  
+# plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                patient_id=y$samples$patient,
+                group_id=y$samples$stage)
+
+ggplot(gg_df,aes(x,y,col=group_id))+
+  geom_point(size=5)+
+  scale_color_manual(values=ggsci::pal_npg(alpha=0.6)(2)[2:1]) +
+  geom_text(aes(label=patient_id,y=y+0.05),position=position_dodge(0.8),size=5, color="black") +
+  labs(x="MDS dim.1",y="MDS dim2")+
+  theme_bw() +
+  theme(panel.grid.minor=element_blank())
+ggsave("thesis_fig/b_cell_ADT_mds.pdf", width = 6, height = 5)
+```
+
+```{r}
+#make design
+f1=factor(y$samples$stage,levels=c("pre","post"))
+f2=y$samples$patient
+design=model.matrix(~0+f1+f2)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  post_vs_pre=post-pre,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit <- glmQLFit(y,design)
+#lrt <- glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+##pre percentage
+pre.group=subset(pt,stage=="pre")
+pre.group=pre.group@assays$ADT@counts
+df$pre.perc=rowSums(pre.group[rownames(df),]>0)/ncol(pre.group)
+##post persentage
+post.group=subset(pt,stage=="post")
+post.group=post.group@assays$ADT@counts
+df$post.prct=rowSums(post.group[rownames(df),]>0)/ncol(post.group)
+table(decideTests(lrt,p.value=0.05))
+df$gene <- rownames(df)
+#save DGE list
+#write.csv(df,file="thesis_fig/dep_edgeR_T_C17.csv")
+
+#rm all ADT < Ctrl
+ctrl_df <- df[grep("Ctrl", df$gene), ]
+df <- df[df$logCPM >= min(ctrl_df$logCPM), ]
+
+```
+
+
+```{r,fig.width=8,fig.height=8}
+volcano.lab=unlist(strsplit("S100A4/S100A8/LY96/NEK6/TRAF1/CST3/CNTNAP2/MGLL","/"))
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                ylim=c(0,15),
+                xlim=c(-1,1),
+                title = "differentially expressed gene in C17",
+                subtitle = paste0('FDR cutoff = 0.05', ", logFC cutoff = 0.5"),
+                #selectLab = volcano.lab,
+                labSize = 4,
+                boxedLabels = F,
+                legendPosition = 'top',
+                legendLabSize = 10,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 0.5,
+                pCutoff = 0.05,
+                FCcutoff = 0,
+                maxoverlapsConnectors=10,
+                #labCol = 'black',
+                #labFace = 'bold', 
+                raster = T
+                ) + 
+  ggtitle(NULL) + 
+  theme(axis.text.x = element_text(size = 17),
+        axis.text.y = element_text(size = 17),)
+ggsave("thesis_fig/volcano_B_protein.pdf",width=6,height=6)
+```
+
+
+
+```{r}
+mds.ls <- list()
+de.ls <- list()
+for (i in 1:10) {
+  pt=subset(srt,refind.type == i)
+  pt=pt[,pt$patient!="BC01033" | pt$refind.type!=6]
+ #make sce
+ matr=pt@assays$ADT@data
+ md=pt@meta.data[,c("patient","stage")]
+ sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+ pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("stage","patient")])
+
+ y=pool
+ y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+ y$samples$stage=factor(y$samples$stage,levels=c("pre","post"))
+  
+ #filtering 
+ keep=filterByExpr(y,group=y$samples$stage)
+ summary(keep)
+ y=y[keep, ,keep.lib.sizes=FALSE]
+  
+ #calculate normalization factors
+ y=calcNormFactors(y)
+  
+ # plot MDS
+ mds=plotMDS.DGEList(y,plot=F)
+ gg_df=data.frame(mds[c("x","y")],
+                patient_id=y$samples$patient,
+                group_id=y$samples$stage)
+
+ mds.ls[[paste("C", i, sep = "")]] <- ggplot(gg_df,aes(x,y,col=group_id))+
+  geom_point(size=5)+
+  scale_color_manual(values=ggsci::pal_npg(alpha=0.6)(2)[2:1]) +
+  geom_text(aes(label=patient_id,y=y+0.05),position=position_dodge(0.8),size=5, color="black") +
+  labs(x="MDS dim.1",y="MDS dim2")+
+  theme_bw() +
+  theme(panel.grid.minor=element_blank())
+ 
+ 
+ #make design
+ f1=factor(y$samples$stage,levels=c("pre","post"))
+ f2=y$samples$patient
+ design=model.matrix(~0+f1+f2)
+ colnames(design)=gsub("f\\d","",colnames(design))
+  
+ #make contrast
+ contr=makeContrasts(
+   post_vs_pre=post-pre,
+   levels=colnames(design)
+ )
+  
+ y=estimateDisp(y,design)
+ plotBCV(y)
+  
+ fit=glmFit(y,design)
+ lrt=glmLRT(fit,contrast=contr)
+ #fit <- glmQLFit(y,design)
+ #lrt <- glmQLFTest(fit,contrast=contr)
+ DEG=topTags(lrt,n=Inf)
+  
+ #the proportion of cell express this gene
+ df=DEG$table
+ ##pre percentage
+ pre.group=subset(pt,stage=="pre")
+ pre.group=pre.group@assays$ADT@counts
+ df$pre.perc=rowSums(pre.group[rownames(df),]>0)/ncol(pre.group)
+ ##post persentage
+ post.group=subset(pt,stage=="post")
+ post.group=post.group@assays$ADT@counts
+ df$post.prct=rowSums(post.group[rownames(df),]>0)/ncol(post.group)
+ table(decideTests(lrt,p.value=0.05))
+ df$gene <- rownames(df)
+ #save DGE list
+ #write.csv(df,file=paste("thesis_fig/volcanol_dep_C", i, ".csv", sep = ""))
+
+ #rm all ADT < Ctrl
+ ctrl_df <- df[grep("Ctrl", df$gene), ]
+ df <- df[df$logCPM >= mean(ctrl_df$logCPM), ]
+ de.ls[[paste("C", i, sep = "")]] <- EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                ylim=c(0,15),
+                xlim=c(-1,1),
+                #title = paste("differentially expressed gene in C", i, sep = ""),
+                #subtitle = paste0('FDR cutoff = 0.05'),
+                #selectLab = volcano.lab,
+                labSize = 4,
+                boxedLabels = F,
+                legendPosition = 'top',
+                legendLabSize = 15,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 0.5,
+                pCutoff = 0.05,
+                FCcutoff = 0,
+                maxoverlapsConnectors=15,
+                #labCol = 'black',
+                #labFace = 'bold', 
+                raster = T
+                ) +
+   ggtitle(paste("DEPs in C", i, sep = ""))
+  theme(axis.text.x = element_text(size = 17),
+        axis.text.y = element_text(size = 17),)
+#ggsave(paste("thesis_fig/volcanol_dep_C", i, ".pdf", sep = ""), width=6, height=6)
+}
+```
+
+
+
+```{r, fig.width=15, fig.height=25}
+pdf("thesis_fig/dep_T_cell.pdf", width = 15, height = 25)
+gridExtra::grid.arrange(grobs = de.ls, ncol = 3)
+dev.off()
+```
+
+
+```{r, fig.width=5, fig.height=18}
+cd57_vln <- list()
+for (i in c(1:4, 7:9)) {
+  pt <- subset(srt,refind.type == i)
+  pt$stage <- factor(pt$stage, levels = c("pre", "post"))
+  cd57_vln[[paste0("C", i)]] <- VlnPlot(pt, features = c(rownames(matr)[grep("CD57", rownames(matr))]), assay = "DSB", split.by = "stage", pt.size = 0, group.by = "patient",
+                                     cols = ggsci::pal_npg(alpha=0.6)(2)[2:1])
+}
+gridExtra::grid.arrange(grobs = cd57_vln, ncol = 1)
+```
+
+
+
+
+```{r, fig.width=7, fig.height=10}
+pt <- subset(srt,refind.type %in% c(1:4, 7:9))
+pt$stage <- factor(pt$stage, levels = c("pre", "post"))
+VlnPlot(pt, features = c(rownames(matr)[grep("Ctrl", rownames(matr))][1], rownames(matr)[grep("CD57", rownames(matr))]), assay = "DSB", split.by = "stage", pt.size = 0, group.by = "patient",
+                                     cols = ggsci::pal_npg(alpha=0.6)(2)[2:1], ncol = 1)
+ggsave("thesis_fig/cd57_prot_T.pdf", width = 6, height = 8)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#end

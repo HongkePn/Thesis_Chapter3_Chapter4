@@ -1,0 +1,239 @@
+---
+title: "b_cluster"
+author: "Hongke Peng"
+date: "31/12/2021"
+output: html_document
+---
+
+#load package
+```{r}
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(harmony)
+```
+
+#load data
+```{r,fig.width=5,fig.height=5}
+b=readRDS("../for_paper/for_paper_data/raw_b.rds")
+DimPlot(b,group.by="stage")
+```
+
+#part 1 ---------------------
+#1st normalize, scale data
+```{r}
+#remove all the reduction object
+for (i in names(b@reductions)) {
+  b[[i]]=NULL
+}
+DefaultAssay(b)="RNA"
+b=NormalizeData(b,assay="RNA")
+b=FindVariableFeatures(b,nfeatures=2000)
+#b=ScaleData(b,vars.to.regress=c("S.Score","G2M.Score","percent.mt"))
+b=ScaleData(b)
+#remove BCR genes
+hvg=VariableFeatures(b)
+hvg=hvg[!grepl("^IGH",hvg)]
+hvg=hvg[!grepl("^IGL",hvg)]
+
+b=RunPCA(b,features=hvg,reduction.name="uncorrPCA",reduction.key="uncorrPCA_")
+b=RunHarmony(b,theta=2,
+             group.by.vars="patient",
+             reduction="uncorrPCA",
+             reduction.save="harmonyPCA",
+             kmeans_init_nstart=20,
+             kmeans_init_iter_max=100,
+             plot_convergence=T)
+ElbowPlot(b,reduction="harmonyPCA",ndims=50)
+```
+
+#run umap and cluster
+```{r,fig.width=10,fig.height=15}
+DefaultAssay(b)="DSB"
+#make a dsb PCA slot
+b=FindVariableFeatures(b)
+b=ScaleData(b)
+b=RunPCA(b,reduction.name="pdsb",reduction.key="pdsb_")
+#choose markers
+#rownames(t)[grep("CD56",rownames(t))]
+prot_to_use=c("CD19.1","CD20","CD27.1","CD83.1","CD69.1","CD11c","CD24.1","CD38.1","CD1d","CD21","CD22.1","CD62L","CD3-UCHT1","CD8","CD4-RPA-T4")
+#make pseudo slot
+pseudo=t(b@assays$DSB@data)
+#pseudo=HarmonyMatrix(pseudo,meta_data=t$patient,do_pca=F,theta=1)
+pseudo=pseudo[,prot_to_use]
+colnames(pseudo)=paste("pseudo",1:length(prot_to_use),sep="_")
+b@reductions$pdsb@cell.embeddings=pseudo
+
+b=FindMultiModalNeighbors(b,
+                          reduction.list=list("harmonyPCA","pdsb"),
+                          #reduction.list=list("harmonyPCA","dsbPCA"),
+                          dims.list=list(1:20,1:length(prot_to_use)),
+                          #dims.list=list(1:50,1:20),
+                          modality.weight.name="RNA.weight",
+                          k.nn=30)
+b=RunUMAP(b,nn.name="weighted.nn",reduction.name="wnn.umap",reduction.key="wnnUMAP_")
+for(i in seq(0,2,0.2)){
+  b=FindClusters(b,graph.name="wsnn",algorithm=3,resolution=i,verbose=FALSE)
+}
+library(clustree)
+clustree(b,prefix="wsnn_res.")
+```
+```{r,fig.width=10,fig.height=5}
+p1=DimPlot(b,group.by="wsnn_res.0.4",label=T) + NoAxes() +NoLegend()
+p2=DimPlot(b,group.by="stage") + NoAxes() +NoLegend()
+p1+p2
+```
+
+
+```{r,fig.width=15,fig.height=5}
+VlnPlot(b,features=c("nCount_RNA","nFeature_RNA","percent.mt","S.Score"),pt.size=0,ncol=2,group.by="wsnn_res.0.4")
+#ggsave("overall_umap_figure/vlnplot_basis.pdf",width=20,heigh)
+```
+
+#filter
+rm cluster 10, 7, doublet
+rm cluster 5, high percent.mt
+rm cluster 9, 11 
+```{r,fig.width=10,fig.height=5}
+b=subset(b,wsnn_res.0.4 != 10 & wsnn_res.0.4 != 7 & wsnn_res.0.4 != 5 & wsnn_res.0.4 != 9 & wsnn_res.0.4 != 11)
+p1=DimPlot(b,group.by="wsnn_res.0.4",label=T) + NoAxes() +NoLegend()
+p2=DimPlot(b,group.by="stage") + NoAxes() +NoLegend()
+p1+p2
+```
+
+```{r}
+saveRDS(b,"b_cluster/b_filtered.rds")
+```
+
+#part 2 ----------------------
+#2st normalize, scale data
+```{r}
+#remove all the reduction object
+for (i in names(b@reductions)) {
+  b[[i]]=NULL
+}
+DefaultAssay(b)="RNA"
+b=NormalizeData(b,assay="RNA")
+b=FindVariableFeatures(b,nfeatures=2000)
+#b=ScaleData(b,vars.to.regress=c("S.Score","G2M.Score","percent.mt"))
+b=ScaleData(b)
+#remove BCR genes
+hvg=VariableFeatures(b)
+hvg=hvg[!grepl("^IGH",hvg)]
+hvg=hvg[!grepl("^IGL",hvg)]
+
+b=RunPCA(b,features=hvg,reduction.name="uncorrPCA",reduction.key="uncorrPCA_")
+b=RunHarmony(b,theta=2,
+             group.by.vars="patient",
+             reduction="uncorrPCA",
+             reduction.save="harmonyPCA",
+             kmeans_init_nstart=20,
+             kmeans_init_iter_max=100,
+             plot_convergence=T)
+ElbowPlot(b,reduction="harmonyPCA",ndims=50)
+```
+
+#run umap and cluster
+```{r,fig.width=10,fig.height=15}
+DefaultAssay(b)="DSB"
+#make a dsb PCA slot
+b=FindVariableFeatures(b)
+b=ScaleData(b)
+b=RunPCA(b,reduction.name="pdsb",reduction.key="pdsb_")
+#choose markers
+#rownames(t)[grep("CD56",rownames(t))]
+prot_to_use=c("CD19.1","CD20","CD83.1","CD69.1","CD11c","CD24.1","CD38.1","CD1d","CD21","CD22.1","CD62L","CD3-UCHT1","CD8","CD4-RPA-T4")
+#make pseudo slot
+pseudo=t(b@assays$DSB@data)
+#pseudo=HarmonyMatrix(pseudo,meta_data=t$patient,do_pca=F,theta=1)
+pseudo=pseudo[,prot_to_use]
+colnames(pseudo)=paste("pseudo",1:length(prot_to_use),sep="_")
+b@reductions$pdsb@cell.embeddings=pseudo
+
+b=FindMultiModalNeighbors(b,
+                          reduction.list=list("harmonyPCA","pdsb"),
+                          #reduction.list=list("harmonyPCA","dsbPCA"),
+                          dims.list=list(1:20,1:length(prot_to_use)),
+                          #dims.list=list(1:50,1:20),
+                          modality.weight.name="RNA.weight",
+                          k.nn=30)
+b=RunUMAP(b,nn.name="weighted.nn",reduction.name="wnn.umap",reduction.key="wnnUMAP_")
+for(i in seq(0,2,0.2)){
+  b=FindClusters(b,graph.name="wsnn",algorithm=3,resolution=i,verbose=FALSE)
+}
+library(clustree)
+clustree(b,prefix="wsnn_res.")
+```
+
+```{r,fig.width=5,fig.height=2.5}
+p1=DimPlot(b,group.by="wsnn_res.0.2",label=T) + NoAxes() +NoLegend()
+p2=DimPlot(b,group.by="stage",pt.size=0.5,order=F) + NoAxes() +NoLegend()
+p1+p2
+```
+```{r,fig.width=2.5,fig.height=2.5}
+DimPlot(b,reduction="wnn.umap",group.by="stage",pt.size=0.5,order=F) + NoAxes() +NoLegend()
+ggsave("b_cluster/dimplot_split_by_stage.pdf",width=5,height=5,dpi=300)
+```
+
+
+
+```{r,fig.width=15,fig.height=5}
+VlnPlot(b,features=c("nCount_RNA","nFeature_RNA","percent.mt","S.Score","RNA.weight"),pt.size=0,ncol=2,group.by="wsnn_res.0.2")
+#ggsave("overall_umap_figure/vlnplot_basis.pdf",width=20,heigh)
+```
+```{r,fig.width=15,fig.height=15}
+FeaturePlot(b,features=c(prot_to_use,"CD27.1"),min.cutoff="q2",max.cutoff="q90",ncol=4)
+```
+
+```{r}
+saveRDS(b,"b_cluster/b_refined.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+end
