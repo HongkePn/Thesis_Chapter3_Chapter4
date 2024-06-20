@@ -1,0 +1,200 @@
+---
+title: "add figure for seminar"
+author: "Hongke Peng"
+date: "2024-01-28"
+output: html_document
+---
+
+```{R}
+library(Seurat)
+library(dsb)
+library(ggplot2)
+library(scater)
+library(scran)
+library(dittoSeq)
+library(batchelor)
+library(DropletUtils)
+library(harmony)
+library(clusterProfiler)
+set.seed(1)
+```
+
+```{r}
+x <- readRDS("make_umap/cll.rds")
+```
+
+```{r, fig.width=10, fig.height=5}
+c1 <- c(ggsci::pal_npg(alpha = 0.5)(8), ggsci::pal_nejm(alpha = 0.5)(8), ggsci::pal_jama(alpha = 0.5)(8))
+set.seed(1)
+c1 <- sample(c1, 15)
+DimPlot(x,reduction="harmonyUMAP",group.by="h_res.0.8", label = T, cols = c1, pt.size = 1, label.size = 6, order = F, raster = T, split.by = "compartment") + NoAxes()
+```
+
+```{r, fig.width=15, fig.height=8}
+table(x$patient)
+x <- subset(x, patient %in% c("CLL281", "CLL295", "CLL400", "CLL427"))
+VlnPlot(x, features = c("BCL2", "BCL2A1", "MCL1", "PMAIP1", "BBC3", "BAD", "BAX", "BAK1", "BCL2L11"), group.by = "patient", split.by = "compartment", pt.size = 0, cols = c1)
+```
+##vlnplot show BCL2 family
+```{r, fig.width=12, fig.height=3}
+x$compartment <- factor(x$compartment, levels = c("PB", "LN"))
+
+for (i in unique(x$patient)) {
+  y <- subset(x, patient == i)
+  p <- VlnPlot(y, features = c("BCL2", "BCL2A1", "BCL2L1", "MCL1", "PMAIP1", "BBC3", "BAD"), group.by = "compartment", cols = c("#3F5386", "#BC3E28"), pt.size = 0, ncol = 7)
+  ggsave(plot = p, filename = paste("add_to_seminar_fig/", i, ".pdf", sep = ""), width = 14, height = 3)
+}
+
+```
+
+##make CLL umap
+```{r}
+for( i in Reductions(x)) {
+  x[[i]] <- NULL
+}
+
+#DefaultAssay(x) <- "RNA"
+x <- NormalizeData(x)
+x <- FindVariableFeatures(x, nfeatures = 2000)
+x = ScaleData(x, vars.to.regress=c("subsets_Mito_percent"))
+#x = ScaleData(x)
+#runPCA
+#x <- SCTransform(x)
+hvg <- VariableFeatures(x)
+hvg <- hvg[!grepl("^IGLV", hvg)]
+hvg <- hvg[!grepl("^IGHV", hvg)]
+hvg <- hvg[!grepl("^IGKV", hvg)]
+hvg <- hvg[!grepl("^TRBV", hvg)]
+hvg <- hvg[!grepl("^TRAV", hvg)]
+x = RunPCA(x, reduction.name = "uncorrPCA", reduction.key="uncorrPCA_", features = hvg)
+#run harmony
+x$stage <- "treatment-naive"
+x$stage[x$patient %in% c("CLL400", "CLL427")] <- "pre-VEN"
+x$stage[x$patient %in% c("CLL281", "CLL295")] <- "VEN-relapsed"
+theta.to.use=1
+x=RunHarmony(x,
+               group.by.vars=c("patient"),
+               reduction="uncorrPCA",
+               theta=1,
+               plot_convergence=T,
+               reduction.save ="harmonyPCA",
+               kmeans_init_nstart=20, 
+               kmeans_init_iter_max=100, 
+               #assay.use = "SCT"
+             )
+ElbowPlot(object=x,ndims=50,reduction="uncorrPCA")
+ElbowPlot(object=x,ndims=50,reduction="harmonyPCA")
+#x <- RunUMAP(x, reduction = "uncorrPCA", dims = 1:20, reduction.name = "uncorrUMAP")
+#x <- FindNeighbors(x, reduction = "uncorrPCA", dims = 1:20, graph.name = "u")
+#x <- FindClusters(x, graph.name = "u", resolution = 0.5)
+#p1 <- dittoDimPlot(x, reduction.use = "uncorrUMAP", var = "compartment", size = 0.5, do.raster = T, do.label = T, labels.size = 3, order = "increasing")
+#p2 <- dittoDimPlot(x, reduction.use = "uncorrUMAP", var = "u_res.0.5", size = 0.5, do.raster = T, do.label = T, labels.size = 3, order = "increasing")
+#p3 <- dittoDimPlot(x, reduction.use = "uncorrUMAP", var = "patient", size = 0.5, do.raster = F)
+#p1 + p2 + p3
+
+x <- RunUMAP(x, reduction = "harmonyPCA", dims = 1:20, reduction.name = "harmonyUMAP", min.dist = 0.01)
+x <- FindNeighbors(x, reduction = "harmonyPCA", dims = 1:20, graph.name = "h")
+x <- FindClusters(x, graph.name = "h", resolution = 0.5)
+
+x <- RunUMAP(x, reduction = "uncorrPCA", dims = 1:20, reduction.name = "uncorrUMAP", min.dist = 0.3)
+x <- FindNeighbors(x, reduction = "uncorrPCA", dims = 1:20, graph.name = "u")
+x <- FindClusters(x, graph.name = "u", resolution = 0.5)
+```
+
+```{r, fig.width=5, fig.height=5}
+c1 <- adjustcolor("#3F5386", 0.5)
+c2 <- adjustcolor("#BC3E28", 0.5)
+DimPlot(x,reduction="harmonyUMAP",group.by="compartment", label = F, pt.size = 1, raster = T, order = T, cols = c(c1, c2))
+ggsave("add_to_seminar_fig/cll_umap.pdf", width = 5, height = 5)
+```
+
+
+#make T UMAP
+```{r}
+y <- readRDS("make_umap/t_NK.rds")
+DefaultAssay(y) <- "RNA"
+#y <- SCTransform(y)
+```
+
+# cell annotation
+```{r,fig.width=17,fig.height=5}
+c1 <- c(ggsci::pal_npg(alpha = 0.7)(8), ggsci::pal_nejm(alpha = 0.7)(8), ggsci::pal_jama(alpha = 0.7)(8))
+y$stage <- "VEN-relapsed"
+y$stage[y$patient %in% c("CLL400", "CLL427")] <- "VEN-naive"
+p1=DimPlot(y,reduction="wnnUMAP",group.by="stage") + NoAxes()
+p2=DimPlot(y,reduction="wnnUMAP",group.by="compartment",pt.size = 0.8, raster = T) + NoAxes()
+p3=DimPlot(y,reduction="wnnUMAP",group.by="refined.cluster", label = T, cols = c1, pt.size = 0.8, label.size = 5, order = F, raster = T, label.box = T) + NoAxes()
+p <- p3 + p2 + p1
+p
+```
+
+```{r, fig.width=5.5, fig.height=5}
+FeaturePlot(y, features = "cd4_tex_UCell", reduction="wnnUMAP", min.cutoff = "q10", max.cutoff = "q95", order = F, cols = c("lightgrey", "orange")) + 
+  NoAxes() + 
+  ggtitle("Tex score")
+ggsave("add_to_seminar_fig/tex_score_umap.png", width = 5.5, height = 5)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#end

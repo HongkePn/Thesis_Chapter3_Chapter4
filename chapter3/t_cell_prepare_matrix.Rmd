@@ -1,0 +1,558 @@
+---
+title: "T cell prepare matrix"
+author: "Hongke Peng"
+date: '2022-08-21'
+output: html_document
+---
+
+#load in data
+```{r,fig.width=5, fig.height=5}
+x <- readRDS("composition_combine_srt_figure/refined_srt.rds")
+dittoDimPlot(x, var = "refined.cluster", reduction.use = "mnnUMAP", color.panel = dittoColors(), do.raster = T, size = 0.1, do.label = T, labels.size = 3)
+t <- subset(x, refined.cluster %in% c(7:15))
+t <- subset(t, patient %in% c("CLL281", "CLL295", "CLL400", "CLL427"))
+DimPlot(t, reduction = "mnnUMAP", group.by = "refined.cluster", label = T, cols = dittoColors()) + NoAxes()
+```
+
+#make t cell clusters
+```{r, fig.width=2.5, fig.height=2}
+DefaultAssay(t) <- "RNA"
+t = NormalizeData(t)
+t = FindVariableFeatures(t)
+t = ScaleData(t)
+#runPCA
+#t[["UNCORRPCA"]] <- NULL
+#t[["UNCORRUMAP"]] <- NULL
+#t[["mnnPCA"]] <- NULL
+#t[["mnnUMAP"]] <- NULL
+t = RunPCA(t, reduction.name = "uncorrPCA", reduction.key = "uncorrPCA_")
+#run harmony
+theta.to.use <- 1
+t = RunHarmony(t,
+               group.by.vars="patient",
+               reduction="uncorrPCA",
+               theta=theta.to.use,
+               plot_convergence=T,
+               reduction.save ="harmonyPCA",
+               kmeans_init_nstart=20, 
+               kmeans_init_iter_max=100)
+
+ElbowPlot(object = t, ndims = 50, reduction = "harmonyPCA")
+#run umap
+dims.to.use=20
+#y=RunUMAP(y,reduction="uncorrPCA",dims=1:dims.to.use,reduction.name="uncorrUMAP",reduction.key="uncorrUMAP_")
+t = RunUMAP(t, reduction = "harmonyPCA", dims = 1:dims.to.use, reduction.name = "harmonyUMAP", reduction.key = "harmonyUMAP_")
+#ggsave(plot=p1,filename="find_cluster_figure/elbowplot_uncorrPCA.pdf",width=6,height=5)
+#find clusters
+t <- FindNeighbors(t, reduction = "harmonyPCA", graph.name = "h", dims = 1:20)
+t <- FindClusters(t, graph.name = "h", resolution = 1, algorithm = 1)
+DimPlot(t, reduction = "harmonyUMAP", group.by = "h_res.1", label = T, cols = dittoColors(), label.box = T) + NoAxes()
+```
+
+```{r,fig.width=15/2, fig.height=10/3}
+rownames(t)[grep("^MS4", rownames(t))]
+VlnPlot(t, features = c("nCount_RNA", "nFeature_RNA", "subsets_Mito_percent", "nCount_ADT", "nFeature_ADT", "rna_CD4", "S.Score", "G2M.Score", "rna_CD8A", "rna_GNLY", "rna_MS4A1"), pt.size = 0, ncol = 3, group.by = "h_res.1", cols = dittoColors())
+```
+
+```{r}
+t <- subset(t, h_res.1 %in% c(0:6, 8:10, 12))
+#loop back
+saveRDS(t, "t_cell_prepare_mtx_figure/t_cluster.rds")
+```
+
+# select pre-/post-VEN treated patient
+```{r, fig.width=5, fig.height=5}
+#keep t cells
+t.names <- colnames(t)
+
+#keep cll/b cells
+dittoDimPlot(x, var = "refined.cluster", reduction.use = "mnnUMAP", color.panel = dittoColors(), do.raster = T, size = 0.1, do.label = T, labels.size = 3)
+b <- subset(x, refined.cluster %in% 0:6)
+b <- subset(b, patient %in% c("CLL281", "CLL295", "CLL400", "CLL427"))
+dittoDimPlot(b, var = "refined.cluster", reduction.use = "mnnUMAP", color.panel = dittoColors(), do.raster = T, size = 0.1, do.label = T, labels.size = 3)
+b.names <- colnames(b)
+
+#keep cells
+keep.cell <- unique(c(t.names, b.names))
+
+x <- x[, keep.cell]
+```
+
+```{r, fig.width=15, fig.height=5}
+#sample list
+sample.ls <- c(CLL400_LN = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL400_GEX_LN/outs/filtered_feature_bc_matrix/",
+                  CLL400_PB = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL400_GEX_PB/outs/filtered_feature_bc_matrix/",
+                  CLL427_LN = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL427_GEX_LN/outs/filtered_feature_bc_matrix/",
+                  CLL427_PB = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL427_GEX_PB/outs/filtered_feature_bc_matrix/",
+                  CLL281_LN_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_LN/CLL281_LN_count20/outs/filtered_feature_bc_matrix/",
+                  CLL281_LN_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_LN/CLL281_LN_count80/outs/filtered_feature_bc_matrix/",
+                  CLL281_PB_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_PB/CLL281_PB_count20/outs/filtered_feature_bc_matrix/",
+                  CLL281_PB_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_PB/CLL281_PB_count80/outs/filtered_feature_bc_matrix/",
+                  CLL295_LN_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_LN/CLL295_LN_count20/outs/filtered_feature_bc_matrix/",
+                  CLL295_LN_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_LN/CLL295_LN_count80/outs/filtered_feature_bc_matrix/",
+                  CLL295_PB_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_PB/CLL295_PB_count20/outs/filtered_feature_bc_matrix/",
+                  CLL295_PB_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_PB/CLL295_PB_count80/outs/filtered_feature_bc_matrix/")
+#read in data
+ufiltered.sce <- Read10X(sample.ls)
+
+#raw list
+raw.ls <- c(CLL400_LN = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL400_GEX_LN/outs/raw_feature_bc_matrix/",
+                  CLL400_PB = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL400_GEX_PB/outs/raw_feature_bc_matrix/",
+                  CLL427_LN = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL427_GEX_LN/outs/raw_feature_bc_matrix/",
+                  CLL427_PB = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL427_GEX_PB/outs/raw_feature_bc_matrix/",
+                  CLL281_LN_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_LN/CLL281_LN_count20/outs/raw_feature_bc_matrix/",
+                  CLL281_LN_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_LN/CLL281_LN_count80/outs/raw_feature_bc_matrix/",
+                  CLL281_PB_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_PB/CLL281_PB_count20/outs/raw_feature_bc_matrix/",
+                  CLL281_PB_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_PB/CLL281_PB_count80/outs/raw_feature_bc_matrix/",
+                  CLL295_LN_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_LN/CLL295_LN_count20/outs/raw_feature_bc_matrix/",
+                  CLL295_LN_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_LN/CLL295_LN_count80/outs/raw_feature_bc_matrix/",
+                  CLL295_PB_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_PB/CLL295_PB_count20/outs/raw_feature_bc_matrix/",
+                  CLL295_PB_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_PB/CLL295_PB_count80/outs/raw_feature_bc_matrix/")
+raw.sce <- Read10X(raw.ls)
+
+#find the name of cells
+raw_srt_names=colnames(ufiltered.sce$`Gene Expression`)
+#find the drop outs
+background_names=setdiff(colnames(raw.sce$`Gene Expression`),raw_srt_names)
+
+#split the data into separate matrices per assay 
+prot=raw.sce$`Antibody Capture`
+rna=raw.sce$`Gene Expression`
+#create metadata of droplet QC stats used in standard scRNAseq processing
+rna_size=log10(Matrix::colSums(rna))
+prot_size=log10(Matrix::colSums(prot))
+ngene=Matrix::colSums(rna>0)
+md=as.data.frame(cbind(rna_size,ngene,prot_size))
+md$bc=rownames(md)
+md$droplet_class=ifelse(test=md$bc %in% raw_srt_names,yes="cell",no="background")
+#Find out cells that have been filtered out
+lowq=raw_srt_names[!(raw_srt_names %in% keep.cell)]
+md=md[!(md$bc %in% lowq),]
+md=md%>%dplyr::filter(rna_size>0 & prot_size>0)
+
+#plot
+c1=ggplot(md,aes(x=rna_size,fill=droplet_class)) + 
+  geom_density(alpha=0.3) + ggtitle("RNA library size") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) +
+  NoLegend()
+  
+c2=ggplot(md,aes(x=prot_size,fill=droplet_class)) + 
+  geom_density(alpha=0.3) + ggtitle("ADT library size") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) + 
+  NoLegend()
+
+c3=ggplot(md,aes(x=log10(ngene),fill=droplet_class)) + 
+  geom_density(alpha=0.3) + ggtitle("Gene detected") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank())
+c=c1+c2+c3
+ggsave(plot=c,filename="t_cell_prepare_mtx_figure/dsb_backgroud_vs_cells_combining_4pt.pdf",width=15,height=5)
+c
+```
+
+```{r, fig.width=15/2, fig.height=40/2}
+md$sample <- sapply(strsplit(md$bc, "_"), function(x){paste(x[1], x[2], sep = "_")})
+
+dsb.plot.1 <- list()
+dsb.plot.2 <- list()
+dsb.plot.3 <- list()
+for(i in unique(md$sample)) {
+  i.md <- md[md$sample == i, ]
+  #plot
+c1=ggplot(i.md,aes(x=rna_size,fill=droplet_class)) + 
+  geom_density(alpha=0.3) + ggtitle("RNA library size") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) +
+  ggtitle(i) +
+  NoLegend()
+  
+c2=ggplot(i.md,aes(x=prot_size,fill=droplet_class)) + 
+  geom_density(alpha=0.3) + ggtitle("ADT library size") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) + 
+  ggtitle(i) +
+  NoLegend()
+
+c3=ggplot(i.md,aes(x=log10(ngene),fill=droplet_class)) + 
+  geom_density(alpha=0.3) + ggtitle("Gene detected") + 
+  theme_bw() +
+  ggtitle(i) +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank())
+c=c1+c2+c3
+ggsave(plot = c, filename = paste0("t_cell_prepare_mtx_figure/", i, "_dsb.pdf"), width = 15, height = 5)
+dsb.plot.1[[i]] <- c1
+dsb.plot.2[[i]] <- c2
+dsb.plot.3[[i]] <- c3
+}
+
+gridExtra::grid.arrange(grobs = dsb.plot.1, ncol = 1)
+gridExtra::grid.arrange(grobs = dsb.plot.2, ncol = 1)
+gridExtra::grid.arrange(grobs = dsb.plot.3, ncol = 1)
+```
+#run dsb normalization by patient
+```{r}
+dsb.mtx <- list()
+
+i <- "CLL400_LN"
+i.md <- md[md$sample == i, ]
+#negative matrix
+background_to_use = i.md$bc[i.md$prot_size > 1 & i.md$prot_size < 2 & i.md$rna_size > 1.5 & i.md$rna_size < 2.5 & i.md$droplet_class == "background"]
+negative_mtx_rawprot = as.matrix(prot[, background_to_use])
+#positive matrix
+cell_to_use = i.md$bc[i.md$droplet_class == "cell"]
+cells_mtx_rawprot = as.matrix(prot[, cell_to_use])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers=names(markers)[markers>30] #I will retain markers > 30
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+library(dsb)
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                           empty_drop_matrix=negative_mtx_rawprot,
+                           denoise.counts=T,
+                           use.isotype.control=T,
+                           isotype.control.name.vec=ctrl)
+saveRDS(output, paste0("t_cell_prepare_mtx_figure/", i, "_dsb.rds"))
+dsb.mtx[[i]] <- output
+
+i <- "CLL400_PB"
+i.md <- md[md$sample == i, ]
+#negative matrix
+background_to_use = i.md$bc[i.md$prot_size > 0.5 & i.md$prot_size < 2 & i.md$rna_size > 1.5 & i.md$rna_size < 2.5 & i.md$droplet_class == "background"]
+negative_mtx_rawprot = as.matrix(prot[, background_to_use])
+#positive matrix
+cell_to_use = i.md$bc[i.md$droplet_class == "cell"]
+cells_mtx_rawprot = as.matrix(prot[, cell_to_use])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers=names(markers)[markers>30] #I will retain markers > 30
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+library(dsb)
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                           empty_drop_matrix=negative_mtx_rawprot,
+                           denoise.counts=T,
+                           use.isotype.control=T,
+                           isotype.control.name.vec=ctrl)
+saveRDS(output, paste0("t_cell_prepare_mtx_figure/", i, "_dsb.rds"))
+dsb.mtx[[i]] <- output
+
+i <- "CLL427_LN"
+i.md <- md[md$sample == i, ]
+#negative matrix
+background_to_use = i.md$bc[i.md$prot_size > 1 & i.md$prot_size < 2 & i.md$rna_size > 2 & i.md$rna_size < 3 & i.md$droplet_class == "background"]
+negative_mtx_rawprot = as.matrix(prot[, background_to_use])
+#positive matrix
+cell_to_use = i.md$bc[i.md$droplet_class == "cell"]
+cells_mtx_rawprot = as.matrix(prot[, cell_to_use])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers=names(markers)[markers>30] #I will retain markers > 30
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+library(dsb)
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                           empty_drop_matrix=negative_mtx_rawprot,
+                           denoise.counts=T,
+                           use.isotype.control=T,
+                           isotype.control.name.vec=ctrl)
+saveRDS(output, paste0("t_cell_prepare_mtx_figure/", i, "_dsb.rds"))
+dsb.mtx[[i]] <- output
+
+i <- "CLL427_PB"
+i.md <- md[md$sample == i, ]
+#negative matrix
+background_to_use = i.md$bc[i.md$prot_size > 0.5 & i.md$prot_size < 2 & i.md$rna_size > 1.5 & i.md$rna_size < 2.5 & i.md$droplet_class == "background"]
+negative_mtx_rawprot = as.matrix(prot[, background_to_use])
+#positive matrix
+cell_to_use = i.md$bc[i.md$droplet_class == "cell"]
+cells_mtx_rawprot = as.matrix(prot[, cell_to_use])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers=names(markers)[markers>30] #I will retain markers > 30
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+library(dsb)
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                           empty_drop_matrix=negative_mtx_rawprot,
+                           denoise.counts=T,
+                           use.isotype.control=T,
+                           isotype.control.name.vec=ctrl)
+saveRDS(output, paste0("t_cell_prepare_mtx_figure/", i, "_dsb.rds"))
+dsb.mtx[[i]] <- output
+
+i <- "CLL281_LN"
+i.md <- md[md$sample == i, ]
+#negative matrix
+background_to_use = i.md$bc[i.md$prot_size > 1 & i.md$prot_size < 2 & i.md$rna_size > 1.5 & i.md$rna_size < 2.5 & i.md$droplet_class == "background"]
+negative_mtx_rawprot = as.matrix(prot[, background_to_use])
+#positive matrix
+cell_to_use = i.md$bc[i.md$droplet_class == "cell"]
+cells_mtx_rawprot = as.matrix(prot[, cell_to_use])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers=names(markers)[markers>30] #I will retain markers > 30
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+library(dsb)
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                           empty_drop_matrix=negative_mtx_rawprot,
+                           denoise.counts=T,
+                           use.isotype.control=T,
+                           isotype.control.name.vec=ctrl)
+saveRDS(output, paste0("t_cell_prepare_mtx_figure/", i, "_dsb.rds"))
+dsb.mtx[[i]] <- output
+
+i <- "CLL281_PB"
+i.md <- md[md$sample == i, ]
+#negative matrix
+background_to_use = i.md$bc[i.md$prot_size > 1 & i.md$prot_size < 2.5 & i.md$rna_size > 1.5 & i.md$rna_size < 2.5 & i.md$droplet_class == "background"]
+negative_mtx_rawprot = as.matrix(prot[, background_to_use])
+#positive matrix
+cell_to_use = i.md$bc[i.md$droplet_class == "cell"]
+cells_mtx_rawprot = as.matrix(prot[, cell_to_use])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers=names(markers)[markers>30] #I will retain markers > 30
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+library(dsb)
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                           empty_drop_matrix=negative_mtx_rawprot,
+                           denoise.counts=T,
+                           use.isotype.control=T,
+                           isotype.control.name.vec=ctrl)
+saveRDS(output, paste0("t_cell_prepare_mtx_figure/", i, "_dsb.rds"))
+dsb.mtx[[i]] <- output
+
+i <- "CLL295_LN"
+i.md <- md[md$sample == i, ]
+#negative matrix
+background_to_use = i.md$bc[i.md$prot_size > 1.2 & i.md$prot_size < 2.5 & i.md$rna_size > 1.5 & i.md$rna_size < 2.5 & i.md$droplet_class == "background"]
+negative_mtx_rawprot = as.matrix(prot[, background_to_use])
+#positive matrix
+cell_to_use = i.md$bc[i.md$droplet_class == "cell"]
+cells_mtx_rawprot = as.matrix(prot[, cell_to_use])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers=names(markers)[markers>30] #I will retain markers > 30
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+library(dsb)
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                           empty_drop_matrix=negative_mtx_rawprot,
+                           denoise.counts=T,
+                           use.isotype.control=T,
+                           isotype.control.name.vec=ctrl)
+saveRDS(output, paste0("t_cell_prepare_mtx_figure/", i, "_dsb.rds"))
+dsb.mtx[[i]] <- output
+
+i <- "CLL295_PB"
+i.md <- md[md$sample == i, ]
+#negative matrix
+background_to_use = i.md$bc[i.md$prot_size > 1.7 & i.md$prot_size < 2.5 & i.md$rna_size > 2 & i.md$rna_size < 3 & i.md$droplet_class == "background"]
+negative_mtx_rawprot = as.matrix(prot[, background_to_use])
+#positive matrix
+cell_to_use = i.md$bc[i.md$droplet_class == "cell"]
+cells_mtx_rawprot = as.matrix(prot[, cell_to_use])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers=names(markers)[markers>30] #I will retain markers > 30
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+library(dsb)
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                           empty_drop_matrix=negative_mtx_rawprot,
+                           denoise.counts=T,
+                           use.isotype.control=T,
+                           isotype.control.name.vec=ctrl)
+saveRDS(output, paste0("t_cell_prepare_mtx_figure/", i, "_dsb.rds"))
+dsb.mtx[[i]] <- output
+```
+##add dsb slot
+```{r, fig.width=5, fig.height=5}
+dittoDimPlot(x, var = "refined.cluster", reduction.use = "mnnUMAP", color.panel = dittoColors(), do.raster = T, size = 0.1, do.label = T, labels.size = 3)
+
+prot_name <- list()
+for(i in names(dsb.mtx)) {
+  prot_name[[i]] <- rownames(dsb.mtx[[i]])
+}
+
+lengths(prot_name)
+prot_name <- unique(unlist(prot_name))
+
+exist.ls <- list()
+none.exist.ls <- list()
+refined.prot.mtx <- list()
+
+for(i in names(dsb.mtx)) {
+  j <- dsb.mtx[[i]]
+  
+  exist_prot <- prot_name[prot_name %in% rownames(j)]
+  exist.ls[[i]] <- exist_prot
+  
+  none_prot <- prot_name[!(prot_name %in% rownames(j))]
+  none.exist.ls[[i]] <- none_prot
+  
+  add.j <- matrix(0, nrow = length(none_prot), ncol = ncol(j))
+  rownames(add.j) <- none_prot
+  colnames(add.j) <- colnames(j)
+  j <- rbind(j, add.j)
+  j <- j[prot_name, ]
+  
+  refined.prot.mtx[[i]] <- j
+}
+
+prot_mtx <- refined.prot.mtx[[1]]
+for (i in 2:length(refined.prot.mtx)) {
+  prot_mtx <- cbind(prot_mtx, refined.prot.mtx[[i]])
+}
+prot_mtx <- prot_mtx[, colnames(x)]
+
+x[["DSB"]] <- CreateAssayObject(data = prot_mtx, min.cells = 10)
+```
+
+##save object
+```{r}
+saveRDS(x, "t_cell_prepare_mtx_figure/inhouse_dsb_srt.rds")
+```
+
+
+#run dsb normalization with all
+```{r}
+#negative matrix
+background_to_use = md$bc[md$prot_size > 1 & md$prot_size < 3 & md$rna_size > 1.5 & md$rna_size < 3 & md$droplet_class == "background"]
+negative_mtx_rawprot = as.matrix(prot[, background_to_use])
+#positive matrix
+cell_to_use = md$bc[md$droplet_class == "cell"]
+cells_mtx_rawprot = as.matrix(prot[, cell_to_use])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers=names(markers)[markers>30] #I will retain markers > 30
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+library(dsb)
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                           empty_drop_matrix=negative_mtx_rawprot,
+                           denoise.counts=T,
+                           use.isotype.control=T,
+                           isotype.control.name.vec=ctrl)
+
+x[["DSBc"]] <- CreateAssayObject(data = output[, colnames(x)])
+```
+##save object
+```{r}
+saveRDS(x, "t_cell_prepare_mtx_figure/inhouse_dsb_srt.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#end

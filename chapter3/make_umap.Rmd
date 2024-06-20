@@ -1,0 +1,398 @@
+---
+title: "Make UMAP"
+author: "Hongke Peng"
+date: "2023-10-12"
+output: html_document
+---
+
+
+#load libraries
+```{R}
+library(Seurat)
+library(ggplot2)
+library(scater)
+library(scran)
+library(dittoSeq)
+library(batchelor)
+library(DropletUtils)
+library(harmony)
+library(clusterProfiler)
+set.seed(1)
+```
+
+#CLL cells + T cells
+```{r,fig.width=6, fig.height=5}
+z <- readRDS("../by_patient_analysis/composition_combine_srt_figure/refined_srt.rds")
+dittoDimPlot(z, reduction.use = "mnnUMAP", var = "refined.cluster", size = 0.01, do.raster = T, do.label = F)
+ggsave("make_umap/umap_all.png", width = 6, height = 5)
+```
+
+```{r,fig.width=11, fig.height=5}
+dittoDimPlot(srt, reduction.use = "mnnUMAP", var = "refined.cluster", size = 0.001, do.raster = T, split.by = "compartment")
+```
+
+
+#cll cluster composition
+```{r,fig.width=10, fig.height=2}
+cll.cluster <- table(srt$compartment, srt$refined.cluster)[, 1:7]
+cll.cluster <- cll.cluster/rowSums(cll.cluster)
+cll.cluster <- as.data.frame(cll.cluster)
+colnames(cll.cluster) <- c("compartment", "cluster", "fraction")
+
+ggplot(cll.cluster, aes(x = cluster, y = fraction, fill = compartment)) + geom_col(position = "dodge", width = 0.5) + theme_bw() +
+  xlab(NULL) + 
+  ylab("normalized fraction") + 
+  scale_fill_manual(values = dittoColors()[3:4]) + 
+  theme(axis.text.x = element_text(size=15))
+#ggsave("composition_combine_srt_figure/barplot.pdf", width = 10, height = 2.5)
+```
+
+```{r, fig.width=10,fig.height=5}
+pt.cll.ct <- table(srt$Sample, srt$refined.cluster)[, 1:7]
+pt.cll.ct <- pt.cll.ct/rowSums(pt.cll.ct)
+df <- scale(t(pt.cll.ct))
+anno_df <- data.frame(sample = colnames(df))
+rownames(anno_df) <- anno_df$sample
+#anno_df$patient <- sapply(strsplit(anno_df$sample, "_"), function(x){x[1]})
+anno_df$compartment <- sapply(strsplit(anno_df$sample, "_"), function(x){x[2]})
+anno_df$group <- "treatment-naive"
+anno_df$group[grepl("CLL281", rownames(anno_df))] <- "VEN-treated"
+anno_df$group[grepl("CLL295", rownames(anno_df))] <- "VEN-treated"
+anno_df$sample <- NULL
+anno_df <- anno_df[, 2:1]
+
+anno_color <- list(compartment = c(LN = dittoColors()[3], PB = dittoColors()[4]),
+                   group = c(`VEN-treated` = dittoColors()[7], `treatment-naive` = dittoColors()[8]))
+pheatmap::pheatmap(t(pt.cll.ct), cluster_rows = F, scale = "column", annotation_col = anno_df, annotation_colors = anno_color, fontsize_row = 15, border_color = NA,
+                   #filename = "composition_combine_srt_figure/heatmap.pdf", 
+                   width = 10, height = 5)
+```
+
+```{r, fig.width=17, fig.height=15}
+FeaturePlot(srt, reduction = "mnnUMAP", features = c("CD3E", "CD4", "CD8A", "IL2RA", "PDCD1", "CTLA4", "FOXP3", "GZMB", "GZMK", "PRF1", "NCAM1", "SELL","CD19", "TCL1A", "CD14"), max.cutoff = "q98", min.cutoff = "q1", raster = T, order = T)
+```
+
+# T and NK
+```{r}
+y <- readRDS("../by_patient_analysis/t_cell_cluster_figure/refined_t_cluster.rds")
+```
+
+# cell annotation
+
+```{r,fig.width=11,,fig.height=5}
+y$refined.cluster <- y$wsnn_res.1
+y$refined.cluster[y$wsnn_res.1 == 11] = 2
+y$refined.cluster[y$wsnn_res.1 == 5] = 3
+y$refined.cluster[y$wsnn_res.1 == 6] = 4
+y$refined.cluster[y$wsnn_res.1 == 4] = 5
+y$refined.cluster[y$wsnn_res.1 == 9] = 6
+
+y$refined.cluster[y$wsnn_res.1 == 12] = 7
+y$refined.cluster[y$wsnn_res.1 == 3] = 8
+y$refined.cluster[y$wsnn_res.1.2 == 12] = 9
+y$refined.cluster[y$wsnn_res.1 == 13] = 10
+y$refined.cluster[y$wsnn_res.1 == 2] = 11
+y$refined.cluster[y$wsnn_res.1 == 10] = 12
+
+y$refined.cluster[y$wsnn_res.1 == 16] = 13
+
+y$refined.cluster[y$wsnn_res.1 == 8] = 14
+y$refined.cluster[y$wsnn_res.1 %in% c(7, 14, 15)] = 15
+
+y$refined.cluster <- factor(y$refined.cluster, levels = 0:15)
+
+c1 <- c(ggsci::pal_npg(alpha = 0.7)(8), ggsci::pal_nejm(alpha = 0.7)(8), ggsci::pal_jama(alpha = 0.7)(8))
+y$stage <- "VEN-relapsed"
+y$stage[y$patient %in% c("CLL400", "CLL427")] <- "pre-VEN"
+p1=DimPlot(y,reduction="wnnUMAP",group.by="stage") + NoAxes()
+p2=DimPlot(y,reduction="wnnUMAP",group.by="compartment",pt.size = 0.8, raster = T) + NoAxes()
+p3=DimPlot(y,reduction="wnnUMAP",group.by="refined.cluster", label = T, cols = c1, label.box = T, pt.size = 0.8, label.size = 5, order = F, raster = T) + NoAxes()
+p <- p3 + p2
+p
+ggsave(plot = p, filename = "make_umap/umap_T_NK.pdf", width = 10.5, height = 5)
+```
+
+```{r,fig.width=9.5, fig.height=5}
+DimPlot(y,reduction="wnnUMAP",group.by="refined.cluster", split.by = "compartment",label = T, cols = c1, pt.size = 0.8, label.size = 7, order = F, raster = T) + NoLegend()
+ggsave("make_umap/umap_split_by_compartment.pdf", width = 9.5, height = 5)
+```
+
+
+```{r, fig.width=15, fig.height=4}
+DimPlot(y,reduction="wnnUMAP",group.by="refined.cluster", label = T, cols = c1, pt.size = 0.8, label.size = 5, split.by = "patient", raster = T) + NoAxes() + NoLegend()
+ggsave("make_umap/umap_T_NK_split_patient.pdf", width = 15, height = 4)
+```
+
+```{r, fig.width=12, fig.height=15}
+library(clustree)
+clustree::clustree(y, prefix = "wsnn_res.")+ ggtitle("Clustering tree")
+```
+
+```{r,fig.width=15,fig.height=15}
+DimPlot(y, reduction = "wnnUMAP", group.by = "compartment", split.by = "wsnn_res.1.2", order=F, ncol = 4) + NoAxes()
+```
+
+```{r}
+rna_test <- FindMarkers(y, group.by = "wsnn_res.1.2", ident.1 = 3, ident.2 = 6, assay = "RNA")
+dsb_test <- FindMarkers(y, group.by = "wsnn_res.1.2", ident.1 = 3, ident.2 = 6, assay = "DSBc", min.pct = 0, logfc.threshold = 0)
+```
+
+```{r,fig.width=15, fig.height=10}
+DefaultAssay(y) <- "DSB"
+rownames(y)[grep("CD56", rownames(y))]
+FeaturePlot(y, reduction = "wnnUMAP", features = c("CD45RO", "CD45RA", "CD4-RPA-T4", "CD56-(NCAM)", "CD8","CD25"), min.cutoff = "q1", max.cutoff = "q99", ncol = 3, order = T, raster = T, cols = c("lightgrey","darkgreen"))
+ggsave("make_umap/dimplot_lineage.pdf", width = 15, height = 10)
+```
+
+```{r,fig.width=15, fig.height=10}
+y <- ScaleData(y)
+rownames(y)[grep("CCR6", rownames(y))]
+VlnPlot(y, features = c("nCount_RNA", "nFeature_RNA", "CD4-RPA-T4", "CD45RO", "CD45RA", "CD8", "TIGIT-(VSTM3)", "CD279-(PD-1)","CD196-(CCR6)", "CD197-(CCR7)","CD194-(CCR4)","rna_FOXP3","CD278-(ICOS)", "rna_TCF7", "rna_CCR7"), pt.size = 0, ncol = 3, group.by = "wsnn_res.1.2", cols = dittoColors(), slot = "data", assay = "DSBc")
+```
+
+##annotation
+
+```{r, fig.width=10, fig.height=6.5}
+rownames(y)[grep("CCR7",rownames(y))]
+prot_for_heatmap=c("CD3-UCHT1","CD4-RPA-T4","CD8","CD56-(NCAM)","TCR-a.B","TCR-Vd2",#lineage
+                   "CD161","CD25","CD127-(IL-7Ra)",#sub lineage
+                   "CD45RO","CD45RA","CD27.1","CD62L","CD29",#effector function
+                   "CD38.1","CD26","HLA-DR","CD69.1","CD28.1",#activation
+                   "CD152-(CTLA-4)","CD278-(ICOS)","CD244-(2B4)","CD272-(BTLA)","CD95-(Fas)","CD48.1","CD279-(PD-1)","TIGIT-(VSTM3)",
+                   "CD274-(B7-H1--PD-L1)","CD223-(LAG-3)","CD366-(Tim-3)",#checkpoint
+                   "CD183-(CXCR3)","CD185-(CXCR5)","CD194-(CCR4)","CD195-(CCR5)","CD196-(CCR6)")
+prot_mtx=as.data.frame(t(y@assays$DSB@data))[,prot_for_heatmap]
+d=cbind(y@meta.data,prot_mtx)
+#make plot dataframe
+prot_plot=d %>% group_by(refined.cluster) %>% summarise_at(.vars=prot_for_heatmap,.funs=mean) %>% tibble::remove_rownames() %>% tibble::column_to_rownames("refined.cluster")
+prot_plot=scale(prot_plot)
+prot_plot[prot_plot>2.5]=2.5
+prot_plot[prot_plot<(-2.5)]=-2.5
+#make row orders
+#prot_plot=prot_plot[as.character(c(12,0,2,4,14,3,9,1,8,10,13,11,6,15,5,7)),]
+
+library(RColorBrewer)
+coul <- colorRampPalette(brewer.pal(9, "RdBu"))(50)
+coul <- colorRampPalette(c("navy", "white", "firebrick3"))(50)
+pheatmap::pheatmap(prot_plot,
+                   #color=viridis::viridis(n=21,option="B",end=0.95),
+                   fontsize=10,
+                   angle_col = 45,
+                   cluster_cols=F,
+                   cluster_rows=F,
+                   gaps_col=c(6,9,14,19,30),
+                   gaps_row=c(8,13,14),
+                   main="T Cell surface protein marker",
+                   col = rev(coul),
+                   filename="make_umap/heatmap_Tcell_prot.pdf",
+                   width=10,height=6.5,cellwidth = 17,cellheight = 17
+                   )
+```
+
+```{r,fig.width=10,fig.height=4.6}
+DefaultAssay(y) <- "RNA"
+y <- NormalizeData(y)
+y <- ScaleData(y)
+#make marker gene list
+marker_gene=c("CD4","CD8A",
+              "LEF1","TCF7","SELL","IL7R","CD40LG","ANXA1","FOS","JUN","TNF","IFNG",
+              "FOXP3","SAT1","IL2RA","CTLA4","PDCD1","TIGIT","CD244","TNFRSF9","LAG3","HAVCR2","ICOS","CD274","ICOSLG","CXCL13","CD200","TNFRSF18",
+              "CCR7","CXCR5","BCL6", "NELL2","CD55","KLF2",#cd8+ Tn
+              "TOB1","ZNF683","CCL5",#cd8+ Trm
+              "GZMK","EOMES","ITM2C",#cd8+ Tem
+              "CX3CR1","GNLY","GZMH","GZMB","CCL4L2",
+              "FCGR3A","FGFBP2","TYROBP","AREG","XCL1","KLRC1",
+              "TRDV2","TRGV9","MTRNR2L8","KLRD1","TRDV1","KLRC3","CTSW","CD7",
+              "MKI67","STMN1","TUBA1B","HIST1H4C")
+marker_gene=c("CD3D","CD4","CD8A","TRDV2","TRGV9",
+              "CCR7","LEF1","TCF7","SELL","CXCR5",
+              "GNLY","IFNG","NKG7","PRF1","GZMA","GZMB","GZMH","GZMK","GZMM",
+              "CTLA4","PDCD1","TIGIT","CD244","TNFRSF9","LAG3","HAVCR2","BTLA",
+              "IL7R","CD40LG","ANXA1","CD69","ZNF683",#"FOS","JUN","TNF",
+              "CD25","FOXP3","IL2RA","ICOS","IKZF2",
+              "FCGR3A","FGFBP2","TYROBP","AREG","XCL1","KLRC1","KLRD1")
+y$refined.cluster <- factor(y$refined.cluster, levels = 15:0)
+DotPlot(y,assay="RNA",cols="RdBu",features=marker_gene,cluster.idents=F, group.by = "refined.cluster") + 
+  theme(axis.text.x=element_text(angle=45,hjust=1,size=10)) + 
+  xlab(NULL) +ylab(NULL) + ggtitle("RNA markers")
+ggsave("make_umap/dotplot_Tcell_gene.pdf", width = 10, height = 4.6)
+```
+
+```{r,fig.width=7, fig.height=5}
+y$cell.type <- as.character(y$refined.cluster)
+y$cell.type[y$refined.cluster == 0] <- "CD4_Tem"
+y$cell.type[y$refined.cluster == 1] <- "CD4_Tcm"
+y$cell.type[y$refined.cluster == 2] <- "CD4_Tn"
+y$cell.type[y$refined.cluster == 3] <- "CD4_Treg_cm"
+y$cell.type[y$refined.cluster == 4] <- "CD4_Treg"
+y$cell.type[y$refined.cluster == 5] <- "CD4_Tcm_ex"
+y$cell.type[y$refined.cluster == 6] <- "CD4_Tem_ex"
+y$cell.type[y$refined.cluster == 7] <- "CD4_Temra"
+y$cell.type[y$refined.cluster == 8] <- "CD8_Tem_ex"
+y$cell.type[y$refined.cluster == 9] <- "CD8_Tcm_ex"
+y$cell.type[y$refined.cluster == 10] <- "CD8_Tn"
+y$cell.type[y$refined.cluster == 11] <- "CD8_Tem"
+y$cell.type[y$refined.cluster == 12] <- "CD8_Temra"
+y$cell.type[y$refined.cluster == 13] <- "T_gd"
+y$cell.type[y$refined.cluster == 14] <- "CD56hi_NK"
+y$cell.type[y$refined.cluster == 15] <- "CD56low_NK"
+DimPlot(y,reduction="wnnUMAP",group.by="cell.type", label = T, cols = c1, label.box = T, pt.size = 0.8, label.size = 3, order = F, raster = T) + NoAxes()
+saveRDS(y, "make_umap/t_NK.rds")
+```
+
+
+##make refined cluster
+```{r, fig.width=25, fig.height=5}
+DefaultAssay(y) <- "DSBc"
+rownames(y)[grep("CXCR5", rownames(y))]
+FeaturePlot(y, reduction = "wnnUMAP", features = c("CD279-(PD-1)","TIGIT-(VSTM3)","CD152-(CTLA-4)","CD223-(LAG-3)","CD366-(Tim-3)"), min.cutoff = "q1", max.cutoff = "q99", ncol = 5, order = T,raster = T, cols = c("lightgrey","darkgreen"))
+ggsave("make_umap/dimplot_checkpoint.pdf", width = 25, height = 5)
+```
+
+```{r, fig.width=15, fig.height=15}
+DefaultAssay(y) <- "DSBc"
+FeaturePlot(y, reduction = "wnnUMAP", features = c("CD38.1", "CD27.1", "CD62L", "CD197-(CCR7)", "CD45RO", "CD45RA", "CD137-(4-1BB)"), min.cutoff = "q1", max.cutoff = "q99", ncol = 3, order = T)
+```
+
+
+```{r, fig.width=15, fig.height=20}
+DefaultAssay(y) <- "RNA"
+FeaturePlot(y, reduction = "wnnUMAP", features = c("TCF7", "FOXP3", "CCR7", "GZMB", "GZMK", "GZMA", "GZMM", "GZMH", "PRF1", "NR4A2", "BCL6"), min.cutoff = "q1", max.cutoff = "q99", ncol = 3, order = T)
+```
+
+
+```{r, fig.width=25, fig.height=5}
+DefaultAssay(y) <- "RNA"
+rownames(y)[grep("TIGIT", rownames(y))]
+FeaturePlot(y, reduction = "wnnUMAP", features = c("PDCD1", "TIGIT", "CTLA4", "LAG3", "HAVCR2"), min.cutoff = "q1", max.cutoff = "q99", ncol = 5, order = T, raster = T)
+ggsave("make_umap/dimplot_checkpoint_rna.pdf", width = 25, height = 5)
+c("GZMB", "GZMK", "GZMA", "GZMM", "GZMH", "PRF1")
+```
+
+#CLL/FL cells from inhouse data
+```{r,fig.width=5, fig.height=5}
+srt <- readRDS("../by_patient_analysis/composition_combine_srt_figure/refined_srt.rds")
+#x <- subset(srt, source == "inHouse" & refined.cluster %in% 1:6)
+x <- subset(srt, refined.cluster %in% 1:6)
+dittoDimPlot(x, reduction.use = "mnnUMAP", var = "refined.cluster", size = 0.01, do.raster = T, do.label = T, labels.size = 3)
+```
+
+```{r, fig.width=16, fig.height=5}
+DefaultAssay(x) <- "RNA"
+x <- NormalizeData(x)
+x <- FindVariableFeatures(x, nfeatures = 2000)
+x = ScaleData(x, vars.to.regress=c("subsets_Mito_percent"))
+#runPCA
+#x <- SCTransform(x)
+hvg <- VariableFeatures(x)
+hvg <- hvg[!grepl("^IGLV", hvg)]
+hvg <- hvg[!grepl("^IGHV", hvg)]
+hvg <- hvg[!grepl("^IGKV", hvg)]
+hvg <- hvg[!grepl("^TRBV", hvg)]
+hvg <- hvg[!grepl("^TRAV", hvg)]
+x = RunPCA(x, reduction.name = "uncorrPCA", reduction.key="uncorrPCA_", features = hvg)
+#run harmony
+theta.to.use=2
+x=RunHarmony(x,
+               group.by.vars=c("patient"),
+               reduction="uncorrPCA",
+               theta=2,
+               plot_convergence=T,
+               reduction.save ="harmonyPCA",
+               kmeans_init_nstart=20, 
+               kmeans_init_iter_max=100, 
+               #assay.use = "SCT"
+             )
+ElbowPlot(object=x,ndims=50,reduction="uncorrPCA")
+ElbowPlot(object=x,ndims=50,reduction="harmonyPCA")
+#x <- RunUMAP(x, reduction = "uncorrPCA", dims = 1:20, reduction.name = "uncorrUMAP")
+#x <- FindNeighbors(x, reduction = "uncorrPCA", dims = 1:20, graph.name = "u")
+#x <- FindClusters(x, graph.name = "u", resolution = 0.5)
+#p1 <- dittoDimPlot(x, reduction.use = "uncorrUMAP", var = "compartment", size = 0.5, do.raster = T, do.label = T, labels.size = 3, order = "increasing")
+#p2 <- dittoDimPlot(x, reduction.use = "uncorrUMAP", var = "u_res.0.5", size = 0.5, do.raster = T, do.label = T, labels.size = 3, order = "increasing")
+#p3 <- dittoDimPlot(x, reduction.use = "uncorrUMAP", var = "patient", size = 0.5, do.raster = F)
+#p1 + p2 + p3
+
+x <- RunUMAP(x, reduction = "harmonyPCA", dims = 1:20, reduction.name = "harmonyUMAP", min.dist = 0.3)
+x <- FindNeighbors(x, reduction = "harmonyPCA", dims = 1:20, graph.name = "h")
+x <- FindClusters(x, graph.name = "h", resolution = 0.8)
+#saveRDS(x, "make_umap/cll.rds")
+x <- readRDS("make_umap/cll.rds")
+p1 <- dittoDimPlot(x, reduction.use = "harmonyUMAP", var = "compartment", size = 0.1, do.raster = T, do.label = T, labels.size = 3)
+p2 <- dittoDimPlot(x, reduction.use = "harmonyUMAP", var = "h_res.1", size = 0.1, do.raster = T, do.label = T, labels.size = 3)
+x$stage <- "treatment-naive"
+x$stage[x$patient %in% c("CLL400", "CLL427")] <- "pre-VEN"
+x$stage[x$patient %in% c("CLL281", "CLL295")] <- "VEN-relapsed"
+p3 <- dittoDimPlot(x, reduction.use = "harmonyUMAP", var = "stage", size = 0.1, do.raster = T)
+
+c1 <- c(ggsci::pal_npg(alpha = 0.5)(8), ggsci::pal_nejm(alpha = 0.5)(8), ggsci::pal_jama(alpha = 0.5)(8))
+set.seed(1)
+c1 <- sample(c1, 13)
+p1=DimPlot(x,reduction="harmonyUMAP",group.by="compartment",cols=dittoColors(), pt.size = 0.8, raster = T) + NoAxes()
+p2=DimPlot(x,reduction="harmonyUMAP",group.by="stage",pt.size = 1, raster = T) + NoAxes()
+p3=DimPlot(x,reduction="harmonyUMAP",group.by="h_res.0.8", label = T, cols = c1, label.box = T, pt.size = 1, label.size = 6, order = F, raster = T) + NoAxes()
+p <- p3 + p2 + p1
+p
+ggsave(plot = p, filename = "make_umap/umap_cll.pdf", width = 16, height = 5)
+```
+
+```{r,fig.width=10, fig.height=5}
+dittoDimPlot(x, reduction.use = "harmonyUMAP", var = "h_res.0.8", size = 0.3, do.raster = F, split.by = "compartment", color.panel = c1)
+dittoDimPlot(x, reduction.use = "harmonyUMAP", var = "h_res.0.8", size = 0.3, do.raster = F, split.by = "stage", color.panel = c1)
+```
+```{r,fig.width=15, fig.height=5}
+DimPlot(x,reduction="harmonyUMAP",group.by="h_res.0.8", label = T, cols = c1, pt.size = 0.1, label.size = 6, order = F, raster = T, split.by = "stage") + NoAxes()
+```
+
+```{r,fig.width=11, fig.height=11}
+#x <- subset(x, h_res.1 %in% 0:10)
+#x <- subset(x, h_res.1 %in% 0:12)
+#x <- subset(x, h_res.0.8 %in% 0:8)
+```
+
+```{r, fig.width=15, fig.height=8}
+VlnPlot(x, features = c("nCount_RNA", "nFeature_RNA", "subsets_Mito_percent", "nCount_ADT", "nFeature_ADT", "S.Score", "G2M.Score", "rna_BCL2", "rna_PDCD1LG2", "rna_CD274"), pt.size = 0, ncol = 3, group.by = "h_res.0.8", cols = c1)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#end

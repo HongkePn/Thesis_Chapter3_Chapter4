@@ -1,0 +1,631 @@
+---
+title: "T cell signature scores"
+author: "Hongke Peng"
+date: "2023-11-08"
+output: html_document
+---
+
+#load libraries
+```{R}
+library(Seurat)
+library(SingleCellExperiment)
+library(ggpubr)
+library(edgeR)
+library(ggplot2)
+library(dittoSeq)
+library(harmony)
+library(clusterProfiler)
+library(UCell)
+set.seed(1)
+```
+
+```{r}
+y <- readRDS("make_umap/t_NK.rds")
+DefaultAssay(y) <- "RNA"
+#y <- SCTransform(y)
+```
+
+# cell annotation
+```{r,fig.width=17,fig.height=5}
+c1 <- c(ggsci::pal_npg(alpha = 0.7)(8), ggsci::pal_nejm(alpha = 0.7)(8), ggsci::pal_jama(alpha = 0.7)(8))
+y$stage <- "VEN-relapsed"
+y$stage[y$patient %in% c("CLL400", "CLL427")] <- "VEN-naive"
+p1=DimPlot(y,reduction="wnnUMAP",group.by="stage") + NoAxes()
+p2=DimPlot(y,reduction="wnnUMAP",group.by="compartment",pt.size = 0.8, raster = T) + NoAxes()
+p3=DimPlot(y,reduction="wnnUMAP",group.by="refined.cluster", label = T, cols = c1, pt.size = 0.8, label.size = 5, order = F, raster = T, label.box = T) + NoAxes()
+p <- p3 + p2 + p1
+p
+```
+
+
+#CD8 Tex vs Tem
+```{r,fig.width=11,fig.height=5}
+pt=subset(y, refined.cluster %in% c(8:9, 11:12))
+pt$Tstatus <- "normal"
+pt$Tstatus[pt$refined.cluster %in% 8:9] <- "exhausted"
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("patient","compartment","stage","Tstatus")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("Tstatus","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$Tstatus)
+summary(keep)#rm:5749,retain:9760
+y=y[keep,,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 stage_id=y$samples$Tstatus,
+                 patient_id=y$samples$patient,
+                 group_id=as.character(y$samples$stage))
+c1 <- c(ggsci::pal_npg(alpha = 0.7)(8), ggsci::pal_nejm(alpha = 0.7)(8), ggsci::pal_jama(alpha = 0.7)(8))
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+p1=ggplot(gg_df,aes(x,y,col=stage_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p2=ggplot(gg_df,aes(x,y,col=group_id,shape=patient_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p <- p1+p2
+p
+ggsave("Tcell_scoring_figure/MDS_CD8Tex_vs_TemTemra.pdf", width = 11, height = 5)
+```
+
+ex vs normal
+```{r}
+#make design
+f1=factor(y$samples$Tstatus, levels=c("exhausted","normal"))
+f2=y$samples$patient
+design=model.matrix(~0+f1+f2)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  comparison=exhausted-normal,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit=glmQLFit(y,design)
+#lrt=glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+df$gene <- rownames(df)
+write.csv(df, file = "Tcell_scoring_figure/edgeR_CD8Tex_vs_TemTemra.csv")
+```
+
+```{r,fig.width=7, fig.height=8}
+df <- read.csv("Tcell_scoring_figure/edgeR_CD8Tex_vs_TemTemra.csv", row.names = 1)
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=df$gene,
+                #xlim=c(-10,10),
+                #ylim=c(0,50),
+                title = " CD8 Tex vs Tem/Temra",
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                selectLab = c("PDCD1","CTLA4","TIGIT","LAG3","HAVCR2","BTLA","TOX","TOX2",
+                              "GZMB","GZMK","GZMH","GNLY","KLRF1","KLRD1","NKG7"),
+                labSize = 6,
+                boxedLabels = T,
+                legendPosition = "top",
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = T,
+                pCutoff = 0.01,
+                raster = T,
+                FCcutoff = 1)
+ggsave("Tcell_scoring_figure/volcano_CD8Tex_vs_TemTemra.pdf", width = 7, height = 8)
+```
+
+
+```{r, fig.width=9, fig.height=5}
+df <- read.csv("Tcell_scoring_figure/edgeR_CD8Tex_vs_TemTemra.csv", row.names = 1)
+up=df[df$FDR<0.05&df$logFC>1,]
+go.up=enrichGO(gene=up$gene,
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.01,
+               qvalueCutoff=0.01)
+go.up <- clusterProfiler::simplify(go.up, cutoff = 0.6, by = "p.adjust", select_fun = min)
+go.up <- go.up@result
+write.csv(go.up, "Tcell_scoring_figure/GOBP_CD8Tex_vs_TemTemra_UP.csv")
+go.up$direction <- "UP"
+
+down=df[df$FDR<0.05&df$logFC<(-1),]
+go.down=enrichGO(gene=down$gene,
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.01,
+               qvalueCutoff=0.01)
+go.down <- clusterProfiler::simplify(go.down, cutoff = 0.6, by = "p.adjust", select_fun = min)
+go.down <- go.down@result
+write.csv(go.down, "Tcell_scoring_figure/GOBP_CD8Tex_vs_TemTemra_DOWN.csv")
+go.down$direction <- "DOWN"
+
+go_df <- rbind(go.up[1:5,], go.down[c(1:5),])
+go_df$Description <- factor(go_df$Description, levels=rev(go_df$Description))
+
+c1=adjustcolor("#0072B2",0.7)
+c2=adjustcolor("#B20072",0.7)
+
+ggplot(go_df,aes(x=Description,y=Count,fill=direction))+
+  geom_bar(stat="identity",width=0.7)+
+  coord_flip()+
+  scale_fill_manual(values=c(c1,c2))+
+  theme_minimal() + 
+  xlab(NULL) + 
+  ylab("DEG Counts")+
+  theme(axis.text.y=element_text(size=14,hjust=0),
+        axis.line.x=element_line(size=0.3,color="black"),
+        axis.ticks.length.x=unit(-0.20,"cm"),
+        axis.text.x=element_text(margin=margin(t=0.3,unit="cm")),
+        panel.grid.major=element_blank())+
+  ggtitle("Selected GO term in CD8 Tex subsets")
+ggsave("Tcell_scoring_figure/GOBP_TOP5_CD8Tex_vs_TemTemra.pdf", width = 9, height = 5)
+```
+
+
+#CD4 Tex vs Tem
+```{r,fig.width=11,fig.height=5}
+pt=subset(y, refined.cluster %in% c(0:1, 5:6))
+pt$Tstatus <- "normal"
+pt$Tstatus[pt$refined.cluster %in% 5:6] <- "exhausted"
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("patient","compartment","stage","Tstatus")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("Tstatus","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$Tstatus)
+summary(keep)#rm:5639,retain:10725
+y=y[keep,,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 stage_id=y$samples$Tstatus,
+                 patient_id=y$samples$patient,
+                 group_id=as.character(y$samples$stage))
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+p1=ggplot(gg_df,aes(x,y,col=stage_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p2=ggplot(gg_df,aes(x,y,col=group_id,shape=patient_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p <- p1+p2
+p
+ggsave("Tcell_scoring_figure/MDS_GZMKT_vs_TemTcm.pdf", width = 11, height = 5)
+```
+
+##ex vs normal
+```{r}
+#make design
+f1=factor(y$samples$Tstatus, levels=c("exhausted","normal"))
+f2=y$samples$patient
+design=model.matrix(~0+f1+f2)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  comparison=exhausted-normal,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit=glmQLFit(y,design)
+#lrt=glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+df$gene <- rownames(df)
+write.csv(df, file = "Tcell_scoring_figure/edgeR_GZMKT_vs_TemTcm.csv")
+```
+
+```{r,fig.width=7, fig.height=8}
+df <- read.csv("Tcell_scoring_figure/edgeR_GZMKT_vs_TemTcm.csv", row.names = 1)
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=df$gene,
+                #xlim=c(-10,10),
+                #ylim=c(0,50),
+                title = "CD4 GZMK T vs Tem/Tcm",
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                selectLab = c("PDCD1","CTLA4","TIGIT","LAG3","HAVCR2","BTLA","TOX","TOX2",
+                              "PRF1","IFNG","NKG7","GZMA","GZMK","FASLG"),
+                labSize = 6, 
+                boxedLabels = T,
+                legendPosition = "top",
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = T,
+                pCutoff = 0.01,
+                raster = T,
+                FCcutoff = 1)
+ggsave("Tcell_scoring_figure/volcano_GZMKT_vs_TemTcm.pdf", width = 7, height = 8)
+```
+
+
+```{r, fig.width=9, fig.height=5}
+df <- read.csv("Tcell_scoring_figure/edgeR_GZMKT_vs_TemTcm.csv", row.names = 1)
+up=df[df$FDR<0.05&df$logFC>0,]
+go.up=enrichGO(gene=up$gene,
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.01,
+               qvalueCutoff=0.01)
+go.up <- clusterProfiler::simplify(go.up, cutoff = 0.6, by = "p.adjust", select_fun = min)
+go.up <- go.up@result
+write.csv(go.up, "Tcell_scoring_figure/GOBP_GZMKT_vs_TemTcm_UP.csv")
+go.up$direction <- "UP"
+
+down=df[df$FDR<0.05&df$logFC<0,]
+go.down=enrichGO(gene=down$gene,
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.01,
+               qvalueCutoff=0.01)
+go.down <- clusterProfiler::simplify(go.down, cutoff = 0.6, by = "p.adjust", select_fun = min)
+go.down <- go.down@result
+write.csv(go.down, "Tcell_scoring_figure/GOBP_GZMKT_vs_TemTcm_DOWN.csv")
+go.down$direction <- "DOWN"
+
+go_df <- rbind(go.up[1:5,], go.down[1:5,])
+go_df$Description <- factor(go_df$Description, levels=rev(go_df$Description))
+
+c1=adjustcolor("#0072B2",0.7)
+c2=adjustcolor("#B20072",0.7)
+
+ggplot(go_df,aes(x=Description,y=Count,fill=direction))+
+  geom_bar(stat="identity",width=0.7)+
+  coord_flip()+
+  scale_fill_manual(values=c(c1,c2))+
+  theme_minimal() + 
+  xlab(NULL) + 
+  ylab("DEG Counts")+
+  theme(axis.text.y=element_text(size=14,hjust=0),
+        axis.line.x=element_line(size=0.3,color="black"),
+        axis.ticks.length.x=unit(-0.20,"cm"),
+        axis.text.x=element_text(margin=margin(t=0.3,unit="cm")),
+        panel.grid.major=element_blank())+
+  ggtitle("Top GO term in CD4 GZMK T subsets")
+ggsave("Tcell_scoring_figure/GOBP_TOP5_GZMKT_vs_TemTcm.pdf", width = 9, height = 5)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#cluster signatures
+```{r}
+DefaultAssay(y) <- "RNA"
+y <- NormalizeData(y)
+y <- ScaleData(y)
+y@active.ident <- y$refined.cluster
+#cluster_signatures <- FindAllMarkers(y, assay = "RNA", test.use = "MAST", only.pos = T)
+```
+
+```{r}
+c5_sig <- cluster_signatures[cluster_signatures$cluster == 5, ]
+c6_sig <- cluster_signatures[cluster_signatures$cluster == 6, ]
+c8_sig <- cluster_signatures[cluster_signatures$cluster == 8, ]
+c9_sig <- cluster_signatures[cluster_signatures$cluster == 9, ]
+```
+
+#surat score
+
+##publish Tex markers
+```{r, fig.width=7, fig.height=9}
+cd4_tex <- read.csv("Tcell_analysis_figure/CD4_Tex_marker.csv")
+cd4_tex <- list(cd4_tex$Gene.Symbol)
+
+cd8_tex <- read.csv("Tcell_analysis_figure/CD8_Tex_marker.csv")
+cd8_tex <- list(cd8_tex$Gene.Symbol)
+
+Tex_sig <- list(unique(c(unlist(cd4_tex), unlist(cd8_tex))))
+  
+cd8_pre_ex <- read.csv("Tcell_analysis_figure/CD8_T_markers.csv")
+pre_marker1 <- cd8_pre_ex[cd8_pre_ex$Cluster == "CD8-C4-GZMK", ]
+pre_marker1 <- list(pre_marker1$Gene.Symbol)
+
+
+cd8_pre_ex <- read.csv("Tcell_analysis_figure/CD8_T_markers.csv")
+pre_marker2 <- cd8_pre_ex[cd8_pre_ex$Cluster == "CD8-C5-ZNF683", ]
+pre_marker2 <- list(pre_marker2$Gene.Symbol)
+
+another_marker <- read.csv("Tcell_analysis_figure/another_markers.csv")
+pre_marker3 <- list(another_marker$CD8_Tpex)
+
+cytotoxity <- list(c("PRF1", "IFNG", "GNLY", "NKG7", "GZMB", "GZMA", "GZMH", "KLRK1", "KLRD1", "CTSW", "CST7"))
+
+naiveness <- list(c("CCR7", "TCF7", "LEF1", "SELL"))
+
+stem_Tex <- list(c("PDCD1","CTLA4","TOX","TOX2","TIGIT","CCR7","LEF1","TCF7","SELL","EEF1A1","IL6R","IGFBP4","IGFL2"))
+
+Treg_signature <- list(c("FOXP3","IL2RA","ICOS","IKZF2","CTLA4"))
+```
+
+
+```{r, fig.width=10, fig.height=5}
+all_gene_set <- data.frame()
+library(msigdbr)
+##C2 canonical pathway
+for (i in c("CP:BIOCARTA", "CP:KEGG", "CP:REACTOME", "CP:WIKIPATHWAYS", "CP:PID")) {
+  mtx <- msigdbr(species = "Homo sapiens",category = "C2",subcategory = i)
+  mtx <- as.data.frame(mtx)
+  all_gene_set <- rbind(all_gene_set, mtx)
+}
+##Hallmark
+mtx <- msigdbr(species = "Homo sapiens",category = "H")
+mtx <- as.data.frame(mtx)
+all_gene_set <- rbind(all_gene_set, mtx)
+
+mtx <- msigdbr(species = "Homo sapiens",category = "C5", subcategory = "GO:BP")
+mtx <- as.data.frame(mtx)
+all_gene_set <- rbind(all_gene_set, mtx)
+
+gmt <- data.frame(term = all_gene_set$gs_name, 
+                  gene = all_gene_set$gene_symbol)
+
+unique(gmt$term[grep("CYTOKINE", gmt$term)])
+
+DefaultAssay(y) <- "RNA"
+cytokine <- list(unique(gmt$gene[gmt$term == "GOBP_CYTOKINE_PRODUCTION"]))
+y <- AddModuleScore(y, features = cytokine, ctrl = 100, name = "cytokine",assay = "RNA")
+VlnPlot(y, features = "cytokine1", group.by = "refined.cluster", cols = c1, pt.size = 0, split.by = "stage") + NoLegend()
+```
+
+
+```{r, fig.width=7, fig.height=9}
+#read in signatures
+DefaultAssay(y) <- "RNA"
+y <- AddModuleScore(y, features = cd4_tex, ctrl = 100, name = "CD4_Tex_score")
+y <- AddModuleScore(y, features = cd8_tex, ctrl = 100, name = "CD8_Tex_score")
+
+y <- AddModuleScore(y, features = pre_marker1, ctrl = 100, name = "pre_marker_1")
+y <- AddModuleScore(y, features = pre_marker2, ctrl = 100, name = "pre_marker_2")
+y <- AddModuleScore(y, features = pre_marker3, ctrl = 100, name = "pre_marker_3")
+
+y <- AddModuleScore(y, features = cytotoxity, ctrl = 100, name = "cytotoxity")
+
+y <- AddModuleScore(y, features = naiveness, ctrl = 100, name = "naiveness")
+
+y <- AddModuleScore(y, features = Treg_signature, ctrl = 100, name = "Treg_signature")
+
+
+
+p1 <- VlnPlot(y, features = "CD8_Tex_score1", group.by = "refined.cluster", cols = c1, pt.size = 0) + NoLegend()
+p2 <- VlnPlot(y, features = "pre_marker_11", group.by = "refined.cluster", cols = c1, pt.size = 0) + NoLegend()
+p3 <- VlnPlot(y, features = "cytotoxity1", group.by = "refined.cluster", cols = c1, pt.size = 0) + NoLegend()
+p4 <- VlnPlot(y, features = "Treg_signature1", group.by = "refined.cluster", cols = c1, pt.size = 0) + NoLegend()
+p5 <- VlnPlot(y, features = "CD4_Tex_score1", group.by = "refined.cluster", cols = c1, pt.size = 0) + NoLegend()
+p <- p1 + p5 + p2 + p3 + p4
+p
+#ggsave(plot = p, filename = "Tcell_analysis_figure/vlnplot_scores.pdf", width = 6, height = 9)
+```
+
+```{r, fig.width=10, fig.height=5}
+VlnPlot(y, features = "cytotoxity1", group.by = "refined.cluster", cols = c1, pt.size = 0, ncol = 1, split.by = "stage") + NoLegend()
+```
+
+
+#Ucell
+```{r}
+#y <- subset(y, refined.cluster %in% 0:12)
+DefaultAssay(y) <- "RNA"
+cytotoxity <- list(unique(c(gmt$gene[gmt$term == "GOBP_T_CELL_MEDIATED_CYTOTOXICITY"], c("PRF1", "IFNG", "GNLY", "NKG7", "GZMB", "GZMA", "GZMH", "KLRK1", "KLRD1", "CTSW", "CST7"))))
+y <- NormalizeData(y)
+#Tex_marker <- unique(c("TOX", "TSC22D1", "PRDM1", "TRPS1", "EOMES", "GZMK", "CXCL13", "GZMA", "CCL3", "CCL5", "CCL3L3", "TNFSF4", "CCL4", "IFNG", "NAMPT","CD74", "CXCR6", "CCR5", "HAVCR2", "CD27", "VCAM1", "LYST", "PDCD1", "DUSP4", "CTLA4", "TNFRSF9", "HLA-DQA1", "HLA-DRB1", unlist(cd4_tex)))
+stem_Tex <- list(stem_Tex)
+sig_collection <- list(cd4_tex = unlist(cd4_tex), 
+                       cd8_tex = unlist(cd8_tex),
+                       #Tex_marker = Tex_marker,
+                       pre_marker1 = unlist(pre_marker1),
+                       pre_marker2 = unlist(pre_marker2),
+                       pre_marker3 = unlist(pre_marker3),
+                       cytotoxity = unlist(cytotoxity), 
+                       naiveness = unlist(naiveness),
+                       stem_Tex = unlist(stem_Tex), 
+                       Treg_signature = unlist(Treg_signature))
+
+y <- AddModuleScore_UCell(y, features = sig_collection, maxRank = 1500,assay = "RNA")
+```
+
+```{r, fig.width=5, fig.height=7}
+names(y@meta.data)
+show_sig <- c("cd4_tex_UCell","cytotoxity_UCell")
+VlnPlot(y, features = show_sig, group.by = "refined.cluster", cols = c1, pt.size = 0, ncol = 1) + NoLegend()
+ggsave("Tcell_scoring_figure/violin_scores_cluster.pdf", width = 5, height = 7)
+```
+
+
+
+```{r, fig.width=15, fig.height=4}
+names(y@meta.data)[45:53]
+show_sig <- c("cd4_tex_UCell","cd8_tex_UCell","Tex_marker_UCell","pre_marker1_UCell","pre_marker3_UCell","cytotoxity_UCell")
+p <- VlnPlot(y, features = "pre_marker1_UCell", group.by = "refined.cluster", cols = c1, pt.size = 0, ncol = 1, split.by = "stage")
+plot_df <- p$data
+ggplot(plot_df,aes(ident,pre_marker1_UCell,fill=split))+
+  geom_violin(trim=T,color="white",scale="width",width=0.65) + 
+  geom_point(stat = 'summary',fun=mean,position = position_dodge(width = 0.65))+
+  stat_summary(fun.min = function(x){mean(x)-sd(x)},fun.max = function(x){mean(x)+sd(x)},
+               geom = 'errorbar',color='black',width=0.01,size=0.5,
+               position = position_dodge(width = 0.65)) +
+  scale_fill_manual(values = c("#4DBBD5B2", "#E64B35B2")) +
+  theme_bw(base_rect_size = 1.5) + 
+  theme(axis.text.x=element_text(size=18), 
+        axis.text.y=element_text(size=18), 
+        axis.title=element_text(size=18), 
+        legend.text=element_text(size=18),
+        legend.title=element_text(size=18),
+        axis.line = element_line(size=0.7), 
+        title = element_text(size = 18),
+        panel.border = element_blank(),
+        panel.grid = element_blank()) +
+  ylab("score") + 
+  xlab("cluster") +
+  ggtitle("Pre−exhaustion signature #1") + 
+  stat_compare_means(label='p.signif',size=7,vjust=0.5)
+ggsave("Tcell_scoring_figure/violin_pre_Tex_split.pdf.pdf",width=15,height=4)
+```
+```{r, fig.width=8, fig.height=4}
+x <- subset(y, refined.cluster %in% 8:13)
+show_sig <- c("cd4_tex_UCell","cd8_tex_UCell","Tex_marker_UCell","pre_marker1_UCell","pre_marker3_UCell","cytotoxity_UCell")
+p <- VlnPlot(x, features = "pre_marker3_UCell", group.by = "refined.cluster", cols = c1, pt.size = 0, ncol = 1, split.by = "stage")
+plot_df <- p$data
+ggplot(plot_df,aes(ident,pre_marker3_UCell,fill=split))+
+  geom_violin(trim=T,color="white",scale="width",width=0.65) + 
+  geom_point(stat = 'summary',fun=mean,position = position_dodge(width = 0.65))+
+  stat_summary(fun.min = function(x){mean(x)-sd(x)},fun.max = function(x){mean(x)+sd(x)},
+               geom = 'errorbar',color='black',width=0.01,size=0.5,
+               position = position_dodge(width = 0.65)) +
+  scale_fill_manual(values = c("#4DBBD5B2", "#E64B35B2")) +
+  theme_bw(base_rect_size = 1.5) + 
+  theme(axis.text.x=element_text(size=18), 
+        axis.text.y=element_text(size=18), 
+        axis.title=element_text(size=18), 
+        legend.text=element_text(size=18),
+        legend.title=element_text(size=18),
+        axis.line = element_line(size=0.7), 
+        title = element_text(size = 18),
+        panel.border = element_blank(),
+        panel.grid = element_blank()) +
+  ylab("score") + 
+  xlab("cluster") +
+  ggtitle("pre-exhaustion signature #2") + 
+  stat_compare_means(label='p.signif',size=7,vjust=0.5)
+ggsave("Tcell_scoring_figure/violin_CD8_pre_Tex2.pdf",width=8,height=4)
+```
+
+
+
+```{r,fig.width=5, fig.height=3}
+x <- subset(y, refined.cluster %in% c(5, 6, 8, 9))
+stem_Tex <- list(c("CCR7","LEF1","TCF7","SELL","EEF1A1","IL6R","IGFBP4","IGFL2","TSHZ2","NR3C1","BATF",
+                   "HAVCR2-", "LAG3-"))
+sig_collection <- list(pre_marker1 = unlist(pre_marker1),
+                       pre_marker2 = unlist(pre_marker2),
+                       pre_marker3 = unlist(pre_marker3),
+                       cytotoxity = unlist(cytotoxity), 
+                       naiveness = unlist(naiveness),
+                       stem_Tex = unlist(stem_Tex))
+x <- NormalizeData(x)
+x <- AddModuleScore_UCell(x, features = sig_collection, maxRank = 1500,assay = "RNA")
+VlnPlot(x, features = c("stem_Tex_UCell"), group.by = "refined.cluster", cols = c1, pt.size = 0) + NoLegend()
+ggsave("Tcell_scoring_figure/violin_stem_Tex.pdf", width = 5, height = 3)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#end

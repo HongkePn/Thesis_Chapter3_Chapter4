@@ -1,0 +1,136 @@
+---
+title: "composition analysis"
+author: "Hongke Peng"
+date: '2022-06-24'
+output: html_document
+---
+
+#load library
+```{r}
+library(Seurat)
+library(dittoSeq)
+library(pheatmap)
+```
+
+#refined the seurat object
+```{r,fig.width=6,fig.height=5}
+srt <- readRDS("qc_combine_srt_figure/refined_srt.rds")
+srt@active.ident <- srt$mnn_res.0.9
+
+for(i in names(srt@meta.data)[grep("mnn_res.", names(srt@meta.data))]){
+  srt[[i]] <- NULL
+}
+
+srt <- FindClusters(srt, graph.name = "mnn", resolution = 0.9)
+dittoDimPlot(srt, reduction.use = "mnnUMAP", var = "seurat_clusters", size = 0.01, do.raster = T, do.label = T, labels.size = 3)
+```
+
+
+```{r,fig.width=10,fig.height=5}
+dittoDimPlot(srt, reduction.use = "mnnUMAP", var = "seurat_clusters", split.by = "compartment", size = 0.01, do.raster = T)
+```
+
+
+
+```{r, fig.width=16, fig.height=5}
+p1 <- dittoDimPlot(srt, var = "source", reduction.use = "mnnUMAP", color.panel = dittoColors()[1:2], do.raster = T, size = 0.1)
+p2 <- dittoDimPlot(srt, var = "compartment", reduction.use = "mnnUMAP", color.panel = dittoColors()[3:4], do.raster = T, size = 0.1)
+p3 <- dittoDimPlot(srt, var = "patient", reduction.use = "mnnUMAP", color.panel = dittoColors()[4:12], do.raster = T, size = 0.1)
+p1 + p2 + p3
+```
+
+#meke refined clusters
+```{r,fig.width=6, fig.height=5}
+srt$refined.cluster <- srt$mnn_res.0.9
+srt$refined.cluster[srt$mnn_res.0.9 == 15] = 0
+srt$refined.cluster[srt$mnn_res.0.9 == 0] = 1
+srt$refined.cluster[srt$mnn_res.0.9 == 4] = 2
+srt$refined.cluster[srt$mnn_res.0.9 == 9] = 3
+srt$refined.cluster[srt$mnn_res.0.9 == 1] = 4
+srt$refined.cluster[srt$mnn_res.0.9 == 3] = 5
+srt$refined.cluster[srt$mnn_res.0.9 == 6] = 6
+srt$refined.cluster[srt$mnn_res.0.9 == 7] = 7
+srt$refined.cluster[srt$mnn_res.0.9 == 13] = 8
+srt$refined.cluster[srt$mnn_res.0.9 == 5] = 9
+srt$refined.cluster[srt$mnn_res.0.9 == 8] = 10
+srt$refined.cluster[srt$mnn_res.0.9 == 2] = 11
+srt$refined.cluster[srt$mnn_res.0.9 == 16] = 12
+srt$refined.cluster[srt$mnn_res.0.9 == 11] = 13
+srt$refined.cluster[srt$mnn_res.0.9 == 14] = 14
+srt$refined.cluster[srt$mnn_res.0.9 == 10] = 15
+srt$refined.cluster[srt$mnn_res.0.9 == 12] = 16
+srt$refined.cluster[srt$mnn_res.0.9 == 17] = 17
+table(srt$refined.cluster)
+srt <- subset(srt, refined.cluster != 17)
+srt$refined.cluster <- factor(srt$refined.cluster, levels = 0:16)
+dittoDimPlot(srt, reduction.use = "mnnUMAP", var = "refined.cluster", size = 0.01, do.raster = T, do.label = T, labels.size = 3)
+```
+#cll cluster composition
+```{r,fig.width=10, fig.height=2}
+cll.cluster <- table(srt$compartment, srt$refined.cluster)[, 1:7]
+cll.cluster <- cll.cluster/rowSums(cll.cluster)
+cll.cluster <- as.data.frame(cll.cluster)
+colnames(cll.cluster) <- c("compartment", "cluster", "fraction")
+
+ggplot(cll.cluster, aes(x = cluster, y = fraction, fill = compartment)) + geom_col(position = "dodge", width = 0.5) + theme_bw() +
+  xlab(NULL) + 
+  ylab("normalized fraction") + 
+  scale_fill_manual(values = dittoColors()[3:4]) + 
+  theme(axis.text.x = element_text(size=15))
+ggsave("composition_combine_srt_figure/barplot.pdf", width = 10, height = 2.5)
+```
+
+```{r, fig.width=10,fig.height=5}
+pt.cll.ct <- table(srt$Sample, srt$refined.cluster)[, 1:7]
+pt.cll.ct <- pt.cll.ct/rowSums(pt.cll.ct)
+df <- scale(t(pt.cll.ct))
+anno_df <- data.frame(sample = colnames(df))
+rownames(anno_df) <- anno_df$sample
+#anno_df$patient <- sapply(strsplit(anno_df$sample, "_"), function(x){x[1]})
+anno_df$compartment <- sapply(strsplit(anno_df$sample, "_"), function(x){x[2]})
+anno_df$group <- "treatment-naive"
+anno_df$group[grepl("CLL281", rownames(anno_df))] <- "VEN-treated"
+anno_df$group[grepl("CLL295", rownames(anno_df))] <- "VEN-treated"
+anno_df$sample <- NULL
+anno_df <- anno_df[, 2:1]
+
+anno_color <- list(compartment = c(LN = dittoColors()[3], PB = dittoColors()[4]),
+                   group = c(`VEN-treated` = dittoColors()[7], `treatment-naive` = dittoColors()[8]))
+pheatmap::pheatmap(t(pt.cll.ct), cluster_rows = F, scale = "column", annotation_col = anno_df, annotation_colors = anno_color, fontsize_row = 15, border_color = NA,
+                   filename = "composition_combine_srt_figure/heatmap.pdf", width = 10, height = 5)
+```
+
+
+#saveRDS
+```{r}
+saveRDS(srt, "composition_combine_srt_figure/refined_srt.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

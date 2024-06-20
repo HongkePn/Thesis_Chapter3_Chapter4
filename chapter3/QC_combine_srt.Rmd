@@ -1,0 +1,124 @@
+---
+title: "Quality control"
+author: "Hongke Peng"
+date: '2022-06-23'
+output: html_document
+---
+
+#load library
+```{r}
+library(Seurat)
+library(dittoSeq)
+library(BiocNeighbors)
+library(BiocParallel)
+library(batchelor)
+bpp=MulticoreParam(5)
+```
+
+#load data
+```{r,fig.width=16,fig.height=5}
+srt <- readRDS("integrate_cll_data_figure/mnn_srt.rds")
+dims.to.use <- 30
+srt <- RunUMAP(srt, reduction = "mnnPCA", dims = 1:dims.to.use, reduction.name = "mnnUMAP", reduction.key = "mnnUMAP_")
+p1 <- dittoDimPlot(srt, var = "source", reduction.use = "mnnUMAP", color.panel = dittoColors()[1:2], do.raster = T, size = 0.1)
+p2 <- dittoDimPlot(srt, var = "compartment", reduction.use = "mnnUMAP", color.panel = dittoColors()[3:4], do.raster = T, size = 0.1)
+p3 <- dittoDimPlot(srt, var = "patient", reduction.use = "mnnUMAP", color.panel = dittoColors()[4:12], do.raster = T, size = 0.1)
+p1 + p2 + p3
+```
+
+#find cluster
+```{r, fig.width=6, fig.height=5}
+srt <- FindNeighbors(srt, reduction = "mnnPCA", dims = 1:30, graph.name = "mnn")
+srt <- FindClusters(srt, graph.name = "mnn", resolution = 1)
+dittoDimPlot(srt, var = "seurat_clusters", size = 0.1, reduction.use = "mnnUMAP", do.label = T, labels.size = 3)
+```
+
+```{r, fig.width=10, fig.height=5}
+dittoDimPlot(srt, var = "seurat_clusters", size = 0.1, reduction.use = "mnnUMAP", split.by = "compartment")
+```
+
+```{r,fig.width=15,fig.height=10}
+VlnPlot(srt,
+        features = c("nCount_RNA", "nFeature_RNA", "subsets_Mito_percent", "S.Score", "G2M.Score","rna_TOX","rna_CD3E", "rna_CD4", "rna_CD8A", "rna_MS4A1", "rna_TCL1A","rna_GNLY"),
+        group.by = "seurat_clusters",
+        ncol = 3, 
+        pt.size = 0, 
+        cols = dittoColors())
+```
+
+#remove cluster 12 and cluster 14
+```{r}
+#srt <- subset(srt, seurat_clusters != 12 & seurat_clusters != 14)
+#loop back
+```
+
+
+```{r,fig.width=10,fig.height=10}
+for(i in seq(0, 1.2, 0.1)){
+  srt <- FindClusters(srt, graph.name = "mnn", resolution = i)
+}
+library(clustree)
+clustree(srt, prefix = "mnn_res.")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

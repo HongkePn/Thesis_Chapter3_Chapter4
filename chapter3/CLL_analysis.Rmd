@@ -1,0 +1,1438 @@
+---
+title: "CLL cell analysis"
+author: "Hongke Peng"
+date: "2023-10-17"
+output: html_document
+---
+
+```{R}
+library(Seurat)
+library(dsb)
+library(ggplot2)
+library(scater)
+library(scran)
+library(dittoSeq)
+library(batchelor)
+library(DropletUtils)
+library(harmony)
+library(clusterProfiler)
+set.seed(1)
+```
+
+
+```{r, fig.width=15, fig.height=5}
+x <- readRDS("make_umap/cll.rds")
+for( i in Reductions(x)) {
+  x[[i]] <- NULL
+}
+
+#DefaultAssay(x) <- "RNA"
+x <- NormalizeData(x)
+x <- FindVariableFeatures(x, nfeatures = 2000)
+x = ScaleData(x, vars.to.regress=c("subsets_Mito_percent"))
+#x = ScaleData(x)
+#runPCA
+#x <- SCTransform(x)
+hvg <- VariableFeatures(x)
+hvg <- hvg[!grepl("^IGLV", hvg)]
+hvg <- hvg[!grepl("^IGHV", hvg)]
+hvg <- hvg[!grepl("^IGKV", hvg)]
+hvg <- hvg[!grepl("^TRBV", hvg)]
+hvg <- hvg[!grepl("^TRAV", hvg)]
+x = RunPCA(x, reduction.name = "uncorrPCA", reduction.key="uncorrPCA_", features = hvg)
+#run harmony
+x$stage <- "treatment-naive"
+x$stage[x$patient %in% c("CLL400", "CLL427")] <- "pre-VEN"
+x$stage[x$patient %in% c("CLL281", "CLL295")] <- "VEN-relapsed"
+theta.to.use=1
+x=RunHarmony(x,
+               group.by.vars=c("patient"),
+               reduction="uncorrPCA",
+               theta=1,
+               plot_convergence=T,
+               reduction.save ="harmonyPCA",
+               kmeans_init_nstart=20, 
+               kmeans_init_iter_max=100, 
+               #assay.use = "SCT"
+             )
+ElbowPlot(object=x,ndims=50,reduction="uncorrPCA")
+ElbowPlot(object=x,ndims=50,reduction="harmonyPCA")
+#x <- RunUMAP(x, reduction = "uncorrPCA", dims = 1:20, reduction.name = "uncorrUMAP")
+#x <- FindNeighbors(x, reduction = "uncorrPCA", dims = 1:20, graph.name = "u")
+#x <- FindClusters(x, graph.name = "u", resolution = 0.5)
+#p1 <- dittoDimPlot(x, reduction.use = "uncorrUMAP", var = "compartment", size = 0.5, do.raster = T, do.label = T, labels.size = 3, order = "increasing")
+#p2 <- dittoDimPlot(x, reduction.use = "uncorrUMAP", var = "u_res.0.5", size = 0.5, do.raster = T, do.label = T, labels.size = 3, order = "increasing")
+#p3 <- dittoDimPlot(x, reduction.use = "uncorrUMAP", var = "patient", size = 0.5, do.raster = F)
+#p1 + p2 + p3
+
+x <- RunUMAP(x, reduction = "harmonyPCA", dims = 1:20, reduction.name = "harmonyUMAP", min.dist = 0.01)
+x <- FindNeighbors(x, reduction = "harmonyPCA", dims = 1:20, graph.name = "h")
+x <- FindClusters(x, graph.name = "h", resolution = 0.5)
+
+x <- RunUMAP(x, reduction = "uncorrPCA", dims = 1:20, reduction.name = "uncorrUMAP", min.dist = 0.3)
+x <- FindNeighbors(x, reduction = "uncorrPCA", dims = 1:20, graph.name = "u")
+x <- FindClusters(x, graph.name = "u", resolution = 0.5)
+#saveRDS(x, "make_umap/cll.rds")
+x <- readRDS("make_umap/cll.rds")
+x$stage <- "treatment-naïve"
+x$stage[x$patient %in% c("CLL400", "CLL427")] <- "VEN-naïve"
+x$stage[x$patient %in% c("CLL281", "CLL295")] <- "VEN-relapsed"
+p3 <- dittoDimPlot(x, reduction.use = "harmonyUMAP", var = "stage", size = 0.1, do.raster = T)
+
+c1 <- c(ggsci::pal_npg(alpha = 0.5)(8), ggsci::pal_nejm(alpha = 0.5)(8), ggsci::pal_jama(alpha = 0.5)(8))
+set.seed(1)
+c1 <- sample(c1, 15)
+p1=DimPlot(x,reduction="harmonyUMAP",group.by="compartment",cols=dittoColors(), pt.size = 0.8, raster = T) + NoAxes()
+p2=DimPlot(x,reduction="harmonyUMAP",group.by="stage",pt.size = 1, raster = T) + NoAxes()
+p3=DimPlot(x,reduction="harmonyUMAP",group.by="h_res.0.8", label = T, label.box = T, pt.size = 1, label.size = 6, order = F, raster = T, cols = c1) + NoAxes()
+p <- p3 + p2 + p1
+p
+
+c1 <- sample(c1, 15)
+p1=DimPlot(x,reduction="uncorrUMAP",group.by="compartment",cols=dittoColors(), pt.size = 0.8, raster = T) + NoAxes()
+p2=DimPlot(x,reduction="uncorrUMAP",group.by="stage",pt.size = 1, raster = T) + NoAxes()
+p3=DimPlot(x,reduction="uncorrUMAP",group.by="patient",pt.size = 1, raster = T) + NoAxes()
+p4=DimPlot(x,reduction="uncorrUMAP",group.by="u_res.0.5", label = T, label.box = T, pt.size = 1, label.size = 6, order = F, raster = T, cols = c1) + NoAxes()
+p <- p4 + p3 + p2 + p1
+p
+ggsave(plot = p, filename = "make_umap/umap_cll.pdf", width = 16, height = 5)
+```
+
+```{r, fig.width=10, fig.height=5}
+DimPlot(x,reduction="harmonyUMAP",group.by="h_res.0.8", label = T, cols = c1, pt.size = 1, label.size = 6, order = F, raster = T, split.by = "compartment") + NoAxes()
+ggsave("CLL_analysis_figure/umap_split_by_compartment.pdf", width = 10, height = 5)
+```
+
+```{r, fig.width=15, fig.height=15}
+DimPlot(x,reduction="harmonyUMAP",group.by="h_res.0.5", label = T, cols = c1, pt.size = 1, label.size = 6, order = F, raster = T, split.by = "patient", ncol = 3) + NoAxes()
+```
+
+#pseudo-bulk analysis
+
+```{r,fig.width=11,fig.height=5}
+pt=x
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("patient","compartment","stage","source")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("compartment","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:6329,retain:12523
+y=y[keep,,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 stage_id=as.character(y$samples$stage),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$compartment)
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+p1=ggplot(gg_df,aes(x,y,col=stage_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p2=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p <- p1+p2
+p
+ggsave("CLL_analysis_figure/MDS.pdf", width = 11, height = 5)
+```
+
+Q1: LN, VEN-relapsed vs pre-VEN
+Q2: PB, VEN-relapsed vs pre-VEN
+##Q1: LN, VEN-relapsed vs pre-VEN
+```{r, fig.width=11, fig.height=5}
+pt=subset(x, source == "inHouse" & compartment == "LN")
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("patient","compartment","stage","source")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("compartment","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:6329,retain:12523
+y=y[keep,,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 stage_id=as.character(y$samples$stage),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$compartment)
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+p1=ggplot(gg_df,aes(x,y,col=stage_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p2=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p <- p1+p2
+p
+```
+
+```{r}
+y$samples$stage <- gsub("-", "_", y$samples$stage)
+#make design
+f1=factor(y$samples$stage,levels=c("VEN_relapsed","pre_VEN"))
+design=model.matrix(~0+f1)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  comparison=VEN_relapsed-pre_VEN,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit=glmQLFit(y,design)
+#lrt=glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+df$gene <- rownames(df)
+write.csv(df, file = "CLL_analysis_figure/edgeR_LN_CLL_relapse_vs_pre.csv")
+```
+
+```{r,fig.width=7, fig.height=8}
+df <- read.csv("CLL_analysis_figure/edgeR_LN_CLL_relapse_vs_pre.csv", row.names = 1)
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                #xlim=c(-10,10),
+                #ylim=c(0,50),
+                title = "DEGs in LN CLL, VEN-relapsed vs VEN-naive",
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                #selectLab = c("CTLA4","PDCD1","TIGIT","LAG3","HAVCR2","BTLA","TOX"),
+                labSize = 6,
+                legendPosition = "top",
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                raster = T, 
+                boxedLabels = T,
+                drawConnectors = T,
+                pCutoff = 0.05,
+                FCcutoff = 1)
+ggsave("CLL_analysis_figure/volcano_LN_CLL_relapse_vs_pre.pdf", width = 7, height = 8)
+```
+
+
+```{r}
+up=df[df$FDR<0.05&df$logFC>1,]
+go.up=enrichGO(gene=rownames(up),
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+
+down=df[df$FDR<0.05&df$logFC<(-1),]
+go.down=enrichGO(gene=rownames(down),
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+```
+
+```{r}
+all_gene_set <- data.frame()
+library(msigdbr)
+##C2 canonical pathway
+for (i in c("CP:BIOCARTA", "CP:KEGG", "CP:REACTOME", "CP:WIKIPATHWAYS", "CP:PID")) {
+  mtx <- msigdbr(species = "Homo sapiens",category = "C2",subcategory = i)
+  mtx <- as.data.frame(mtx)
+  all_gene_set <- rbind(all_gene_set, mtx)
+}
+##Hallmark
+mtx <- msigdbr(species = "Homo sapiens",category = "H")
+mtx <- as.data.frame(mtx)
+all_gene_set <- rbind(all_gene_set, mtx)
+
+gs <- gs[names(gs)[lengths(gs) <= 1500]]
+
+#df <- readRDS("call_sf3b1_fig/marker_screening_mut_vs_wt.rds")
+
+#length(unique(unlist(gs))) #18707
+
+#catherine_jw <- read.csv("call_sf3b1_fig/catherine_jw.csv", header = T)
+#gs$catherine_jw_BCR <- catherine_jw$Genes
+
+sum(unique(unlist(gs)) %in% rownames(df)) #6174
+
+gmt <- data.frame(term = all_gene_set$gs_name, 
+                  gene = all_gene_set$entrez_gene)
+
+
+#df <- df[df$logCPM >= 5, ]
+#rm genes with small faction of cells expressing it
+id=bitr(df$gene,"SYMBOL","ENTREZID","org.Hs.eg.db") #5.38% of input gene IDs are fail to map...
+#make geneList
+marker=merge(df,id,by.x="gene",by.y="SYMBOL")
+marker=data.frame(logFC=marker$logFC,SYMBOL=marker$ENTREZID)
+#marker=data.frame(logFC=marker$avg_log2FC,SYMBOL=marker$ENTREZID)
+geneList=marker$logFC
+names(geneList)=marker$SYMBOL
+geneList=sort(geneList,decreasing=T)
+gsea.result <- GSEA(geneList, TERM2GENE = gmt, seed = T, pvalueCutoff = 0.05, pAdjustMethod = "BH")
+write.csv(gsea.result@result, "CLL_analysis_figure/gsea_LN_CLL_relpase_vs_pre.csv")
+```
+
+
+
+##Q2: PB, VEN-relapsed vs pre-VEN
+```{r, fig.width=11, fig.height=5}
+pt=subset(x, source == "inHouse" & compartment == "PB")
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("patient","compartment","stage","source")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("compartment","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:6329,retain:12523
+y=y[keep,,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 stage_id=as.character(y$samples$stage),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$compartment)
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+p1=ggplot(gg_df,aes(x,y,col=stage_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p2=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p <- p1+p2
+p
+```
+
+```{r}
+y$samples$stage <- gsub("-", "_", y$samples$stage)
+#make design
+f1=factor(y$samples$stage,levels=c("VEN_relapsed","pre_VEN"))
+design=model.matrix(~0+f1)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  comparison=VEN_relapsed-pre_VEN,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit=glmQLFit(y,design)
+#lrt=glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+df$gene <- rownames(df)
+write.csv(df, file = "CLL_analysis_figure/edgeR_PB_CLL_relapse_vs_pre.csv")
+```
+
+```{r,fig.width=7, fig.height=8}
+df <- read.csv("CLL_analysis_figure/edgeR_PB_CLL_relapse_vs_pre.csv", row.names = 1)
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                #xlim=c(-10,10),
+                #ylim=c(0,50),
+                title = "DEG in PB CLL, VEN-relapsed vs VEN-naive",
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                #selectLab = c("CTLA4","PDCD1","TIGIT","LAG3","HAVCR2","BTLA","TOX"),
+                labSize = 6,
+                boxedLabels = T,
+                legendPosition = "top", 
+                raster = T,
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = T,
+                pCutoff = 0.05,
+                FCcutoff = 1)
+ggsave("CLL_analysis_figure/volcano_PB_CLL_relapse_vs_pre.pdf", width = 7, height = 8)
+```
+
+
+```{r}
+up=df[df$FDR<0.05&df$logFC>1,]
+go.up=enrichGO(gene=rownames(up),
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+
+down=df[df$FDR<0.05&df$logFC<(-1),]
+go.down=enrichGO(gene=rownames(down),
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+```
+
+```{r}
+all_gene_set <- data.frame()
+library(msigdbr)
+##C2 canonical pathway
+for (i in c("CP:BIOCARTA", "CP:KEGG", "CP:REACTOME", "CP:WIKIPATHWAYS", "CP:PID")) {
+  mtx <- msigdbr(species = "Homo sapiens",category = "C2",subcategory = i)
+  mtx <- as.data.frame(mtx)
+  all_gene_set <- rbind(all_gene_set, mtx)
+}
+##Hallmark
+mtx <- msigdbr(species = "Homo sapiens",category = "H")
+mtx <- as.data.frame(mtx)
+all_gene_set <- rbind(all_gene_set, mtx)
+
+gs <- gs[names(gs)[lengths(gs) <= 1500]]
+
+#df <- readRDS("call_sf3b1_fig/marker_screening_mut_vs_wt.rds")
+
+#length(unique(unlist(gs))) #18707
+
+#catherine_jw <- read.csv("call_sf3b1_fig/catherine_jw.csv", header = T)
+#gs$catherine_jw_BCR <- catherine_jw$Genes
+
+sum(unique(unlist(gs)) %in% rownames(df)) #6174
+
+gmt <- data.frame(term = all_gene_set$gs_name, 
+                  gene = all_gene_set$entrez_gene)
+
+
+#df <- df[df$logCPM >= 5, ]
+#rm genes with small faction of cells expressing it
+id=bitr(df$gene,"SYMBOL","ENTREZID","org.Hs.eg.db") #5.38% of input gene IDs are fail to map...
+#make geneList
+marker=merge(df,id,by.x="gene",by.y="SYMBOL")
+marker=data.frame(logFC=marker$logFC,SYMBOL=marker$ENTREZID)
+#marker=data.frame(logFC=marker$avg_log2FC,SYMBOL=marker$ENTREZID)
+geneList=marker$logFC
+names(geneList)=marker$SYMBOL
+geneList=sort(geneList,decreasing=T)
+gsea.result <- GSEA(geneList, TERM2GENE = gmt, seed = T, pvalueCutoff = 0.05, pAdjustMethod = "BH")
+write.csv(gsea.result@result, "CLL_analysis_figure/gsea_PB_CLL_relpase_vs_pre.csv")
+```
+
+##Q3: VEN-relapsed LN vs PB
+```{r, fig.width=11, fig.height=5}
+pt=subset(x, stage == "VEN-relapsed")
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("patient","compartment","stage","source")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("compartment","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:6329,retain:12523
+y=y[keep,,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 stage_id=as.character(y$samples$stage),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$compartment)
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+p1=ggplot(gg_df,aes(x,y,col=stage_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p2=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p <- p1+p2
+p
+```
+
+```{r}
+#make design
+f1=factor(y$samples$compartment,levels=c("LN","PB"))
+f2=y$samples$patient
+design=model.matrix(~0+f1+f2)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  comparison=LN-PB,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit=glmQLFit(y,design)
+#lrt=glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+df$gene <- rownames(df)
+write.csv(df, file = "CLL_analysis_figure/edgeR_relapse_LN_vs_PB.csv")
+```
+
+```{r,fig.width=7, fig.height=8}
+df <- read.csv("CLL_analysis_figure/edgeR_relapse_LN_vs_PB.csv", row.names = 1)
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                #xlim=c(-10,10),
+                #ylim=c(0,50),
+                title = "DEGs in VEN-relapsed CLL, LN vs PB",
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                #selectLab = c("CTLA4","PDCD1","TIGIT","LAG3","HAVCR2","BTLA","TOX"),
+                labSize = 6,
+                boxedLabels = T, 
+                raster = T,
+                legendPosition = "top",
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = T,
+                pCutoff = 0.05,
+                FCcutoff = 1)
+ggsave("CLL_analysis_figure/volcano_relapse_LN_vs_PB.pdf", width = 7, height = 8)
+```
+
+
+```{r}
+up=df[df$FDR<0.05&df$logFC>1,]
+go.up=enrichGO(gene=rownames(up),
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+View(go.up@result)
+
+down=df[df$FDR<0.05&df$logFC<(-1),]
+go.down=enrichGO(gene=rownames(down),
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+View(go.down@result)
+```
+
+```{r}
+all_gene_set <- data.frame()
+library(msigdbr)
+##C2 canonical pathway
+for (i in c("CP:BIOCARTA", "CP:KEGG", "CP:REACTOME", "CP:WIKIPATHWAYS", "CP:PID")) {
+  mtx <- msigdbr(species = "Homo sapiens",category = "C2",subcategory = i)
+  mtx <- as.data.frame(mtx)
+  all_gene_set <- rbind(all_gene_set, mtx)
+}
+##Hallmark
+mtx <- msigdbr(species = "Homo sapiens",category = "H")
+mtx <- as.data.frame(mtx)
+all_gene_set <- rbind(all_gene_set, mtx)
+
+gs <- gs[names(gs)[lengths(gs) <= 1500]]
+
+#df <- readRDS("call_sf3b1_fig/marker_screening_mut_vs_wt.rds")
+
+#length(unique(unlist(gs))) #18707
+
+#catherine_jw <- read.csv("call_sf3b1_fig/catherine_jw.csv", header = T)
+#gs$catherine_jw_BCR <- catherine_jw$Genes
+
+sum(unique(unlist(gs)) %in% rownames(df)) #6174
+
+gmt <- data.frame(term = all_gene_set$gs_name, 
+                  gene = all_gene_set$entrez_gene)
+
+
+#df <- df[df$logCPM >= 5, ]
+#rm genes with small faction of cells expressing it
+id=bitr(df$gene,"SYMBOL","ENTREZID","org.Hs.eg.db") #5.38% of input gene IDs are fail to map...
+#make geneList
+marker=merge(df,id,by.x="gene",by.y="SYMBOL")
+marker=data.frame(logFC=marker$logFC,SYMBOL=marker$ENTREZID)
+#marker=data.frame(logFC=marker$avg_log2FC,SYMBOL=marker$ENTREZID)
+geneList=marker$logFC
+names(geneList)=marker$SYMBOL
+geneList=sort(geneList,decreasing=T)
+gsea.result <- GSEA(geneList, TERM2GENE = gmt, seed = T, pvalueCutoff = 0.05, pAdjustMethod = "BH")
+View(gsea.result@result)
+write.csv(gsea.result@result, "CLL_analysis_figure/gsea_relapse_LN_vs_PB.csv")
+```
+
+
+```{r, fig.width=10, fig.height=5}
+df <- read.csv("CLL_analysis_figure/gsea_relapse_LN_vs_PB.csv", row.names = 1)
+df <- df[grep("HALLMARK", df$Description), ]
+up_df <- df[df$NES > 0, ]
+up_df <- up_df[1:5, ]
+up_df$direction <- "UP"
+dw_df <- df[df$NES < 0, ]
+dw_df <- dw_df[1:5, ]
+dw_df$direction <- "DOWN"
+
+df <- rbind(up_df, dw_df)
+df$Description <- factor(df$Description, levels=rev(df$Description))
+
+c1=adjustcolor("#0072B2",0.7)
+c2=adjustcolor("#B20072",0.7)
+
+ggplot(df,aes(x=Description,y=abs(NES),fill=direction))+
+  geom_bar(stat="identity",width=0.7)+
+  coord_flip()+
+  scale_fill_manual(values=c(c1,c2))+
+  theme_minimal() + 
+  xlab(NULL) + 
+  ylab("Normalised enrichment score")+
+  theme(axis.text.y=element_text(size=14,hjust=0),
+        axis.line.x=element_line(size=0.3,color="black"),
+        axis.ticks.length.x=unit(-0.20,"cm"),
+        axis.text.x=element_text(margin=margin(t=0.3,unit="cm")),
+        panel.grid.major=element_blank())+
+  ggtitle("Top enriched HALLMARK pathways in VEN-relapsed CLL cell, LN vs PB")
+ggsave("CLL_analysis_figure/barplot_gsea_relapse_LN_vs_PB.pdf", width = 10, height = 5)
+```
+
+
+##Q4: pre-VEN LN vs PB
+```{r, fig.width=11, fig.height=5}
+pt=subset(x, stage == "pre-VEN")
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("patient","compartment","stage","source")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("compartment","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:6329,retain:12523
+y=y[keep,,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 stage_id=as.character(y$samples$stage),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$compartment)
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+p1=ggplot(gg_df,aes(x,y,col=stage_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p2=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p <- p1+p2
+p
+```
+
+```{r}
+#make design
+f1=factor(y$samples$compartment,levels=c("LN","PB"))
+f2=y$samples$patient
+design=model.matrix(~0+f1+f2)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  comparison=LN-PB,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit=glmQLFit(y,design)
+#lrt=glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+df$gene <- rownames(df)
+write.csv(df, file = "CLL_analysis_figure/edgeR_pre_LN_vs_PB.csv")
+```
+
+```{r,fig.width=7, fig.height=8}
+df <- read.csv("CLL_analysis_figure/edgeR_pre_LN_vs_PB.csv", row.names = 1)
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                #xlim=c(-10,10),
+                #ylim=c(0,50),
+                title = "VEN-naive, LN vs PB",
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                #selectLab = c("CTLA4","PDCD1","TIGIT","LAG3","HAVCR2","BTLA","TOX"),
+                labSize = 6,
+                boxedLabels = T,
+                raster = T,
+                legendPosition = "top",
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = T,
+                pCutoff = 0.05,
+                FCcutoff = 1)
+ggsave("CLL_analysis_figure/volcano_pre_LN_vs_PB.pdf", width = 7, height = 8)
+```
+
+
+```{r}
+up=df[df$FDR<0.05&df$logFC>1,]
+go.up=enrichGO(gene=rownames(up),
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+View(go.up@result)
+
+down=df[df$FDR<0.05&df$logFC<(-1),]
+go.down=enrichGO(gene=rownames(down),
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+View(go.down@result)
+```
+
+```{r}
+all_gene_set <- data.frame()
+library(msigdbr)
+##C2 canonical pathway
+for (i in c("CP:BIOCARTA", "CP:KEGG", "CP:REACTOME", "CP:WIKIPATHWAYS", "CP:PID")) {
+  mtx <- msigdbr(species = "Homo sapiens",category = "C2",subcategory = i)
+  mtx <- as.data.frame(mtx)
+  all_gene_set <- rbind(all_gene_set, mtx)
+}
+##Hallmark
+mtx <- msigdbr(species = "Homo sapiens",category = "H")
+mtx <- as.data.frame(mtx)
+all_gene_set <- rbind(all_gene_set, mtx)
+
+gmt <- data.frame(term = all_gene_set$gs_name, 
+                  gene = all_gene_set$entrez_gene)
+
+
+#df <- df[df$logCPM >= 5, ]
+#rm genes with small faction of cells expressing it
+id=bitr(df$gene,"SYMBOL","ENTREZID","org.Hs.eg.db") #5.38% of input gene IDs are fail to map...
+#make geneList
+marker=merge(df,id,by.x="gene",by.y="SYMBOL")
+marker=data.frame(logFC=marker$logFC,SYMBOL=marker$ENTREZID)
+#marker=data.frame(logFC=marker$avg_log2FC,SYMBOL=marker$ENTREZID)
+geneList=marker$logFC
+names(geneList)=marker$SYMBOL
+geneList=sort(geneList,decreasing=T)
+gsea.result <- GSEA(geneList, TERM2GENE = gmt, seed = T, pvalueCutoff = 0.05, pAdjustMethod = "BH")
+View(gsea.result@result)
+write.csv(gsea.result@result, "CLL_analysis_figure/gsea_pre_LN_vs_PB.csv")
+```
+
+```{r, fig.width=10, fig.height=5}
+df <- read.csv("CLL_analysis_figure/gsea_pre_LN_vs_PB.csv", row.names = 1)
+df <- df[grep("HALLMARK", df$Description), ]
+up_df <- df[df$NES > 0, ]
+up_df <- up_df[1:5, ]
+up_df$direction <- "UP"
+dw_df <- df[df$NES < 0, ]
+dw_df <- dw_df[1, ]
+dw_df$direction <- "DOWN"
+
+df <- rbind(up_df, dw_df)
+df$Description <- factor(df$Description, levels=rev(df$Description))
+
+c1=adjustcolor("#0072B2",0.7)
+c2=adjustcolor("#B20072",0.7)
+
+ggplot(df,aes(x=Description,y=abs(NES),fill=direction))+
+  geom_bar(stat="identity",width=0.7)+
+  coord_flip()+
+  scale_fill_manual(values=c(c1,c2))+
+  theme_minimal() + 
+  xlab(NULL) + 
+  ylab("Normalised enrichment score")+
+  theme(axis.text.y=element_text(size=14,hjust=0),
+        axis.line.x=element_line(size=0.3,color="black"),
+        axis.ticks.length.x=unit(-0.20,"cm"),
+        axis.text.x=element_text(margin=margin(t=0.3,unit="cm")),
+        panel.grid.major=element_blank())+
+  ggtitle("Top enriched HALLMARK pathways in VEN-naive CLL cell, LN vs PB")
+ggsave("CLL_analysis_figure/barplot_gsea_pre_LN_vs_PB.pdf", width = 10, height = 5)
+```
+
+##Q5:TN LN vs PB
+```{r, fig.width=11, fig.height=5}
+pt=subset(x, stage == "treatment-naive")
+#make sce
+matr=pt@assays$RNA@counts
+md=pt@meta.data[,c("patient","compartment","stage","source")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("compartment","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:6329,retain:12523
+y=y[keep,,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 stage_id=as.character(y$samples$stage),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$compartment)
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+p1=ggplot(gg_df,aes(x,y,col=stage_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p2=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p <- p1+p2
+p
+```
+
+```{r}
+#make design
+f1=factor(y$samples$compartment,levels=c("LN","PB"))
+f2=y$samples$patient
+design=model.matrix(~0+f1+f2)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  comparison=LN-PB,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit=glmQLFit(y,design)
+#lrt=glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+df$gene <- rownames(df)
+write.csv(df, file = "CLL_analysis_figure/edgeR_TN_LN_vs_PB.csv")
+```
+
+```{r,fig.width=7, fig.height=8}
+df <- read.csv("CLL_analysis_figure/edgeR_TN_LN_vs_PB.csv", row.names = 1)
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                #xlim=c(-10,10),
+                #ylim=c(0,50),
+                title = "Treatment-naive CLL, LN vs PB",
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                #selectLab = c("CTLA4","PDCD1","TIGIT","LAG3","HAVCR2","BTLA","TOX"),
+                labSize = 6, 
+                boxedLabels = T, 
+                raster = T, 
+                legendPosition = "top",
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = T,
+                pCutoff = 0.05,
+                FCcutoff = 1)
+ggsave("CLL_analysis_figure/volcano_TN_LN_vs_PB.pdf", width = 7, height = 8)
+```
+
+
+```{r}
+up=df[df$FDR<0.05&df$logFC>1,]
+go.up=enrichGO(gene=rownames(up),
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+View(go.up@result)
+
+down=df[df$FDR<0.05&df$logFC<(-1),]
+go.down=enrichGO(gene=rownames(down),
+               OrgDb="org.Hs.eg.db",
+               keyType="SYMBOL",
+               ont="BP",
+               pAdjustMethod="BH",
+               pvalueCutoff=0.05,
+               qvalueCutoff=0.05)
+View(go.down@result)
+```
+
+```{r}
+all_gene_set <- data.frame()
+library(msigdbr)
+##C2 canonical pathway
+for (i in c("CP:BIOCARTA", "CP:KEGG", "CP:REACTOME", "CP:WIKIPATHWAYS", "CP:PID")) {
+  mtx <- msigdbr(species = "Homo sapiens",category = "C2",subcategory = i)
+  mtx <- as.data.frame(mtx)
+  all_gene_set <- rbind(all_gene_set, mtx)
+}
+##Hallmark
+mtx <- msigdbr(species = "Homo sapiens",category = "H")
+mtx <- as.data.frame(mtx)
+all_gene_set <- rbind(all_gene_set, mtx)
+
+gs <- gs[names(gs)[lengths(gs) <= 1500]]
+
+#df <- readRDS("call_sf3b1_fig/marker_screening_mut_vs_wt.rds")
+
+#length(unique(unlist(gs))) #18707
+
+#catherine_jw <- read.csv("call_sf3b1_fig/catherine_jw.csv", header = T)
+#gs$catherine_jw_BCR <- catherine_jw$Genes
+
+sum(unique(unlist(gs)) %in% rownames(df)) #6174
+
+gmt <- data.frame(term = all_gene_set$gs_name, 
+                  gene = all_gene_set$entrez_gene)
+
+
+#df <- df[df$logCPM >= 5, ]
+#rm genes with small faction of cells expressing it
+id=bitr(df$gene,"SYMBOL","ENTREZID","org.Hs.eg.db") #5.38% of input gene IDs are fail to map...
+#make geneList
+marker=merge(df,id,by.x="gene",by.y="SYMBOL")
+marker=data.frame(logFC=marker$logFC,SYMBOL=marker$ENTREZID)
+#marker=data.frame(logFC=marker$avg_log2FC,SYMBOL=marker$ENTREZID)
+geneList=marker$logFC
+names(geneList)=marker$SYMBOL
+geneList=sort(geneList,decreasing=T)
+gsea.result <- GSEA(geneList, TERM2GENE = gmt, seed = T, pvalueCutoff = 0.05, pAdjustMethod = "BH")
+View(gsea.result@result)
+write.csv(gsea.result@result, "CLL_analysis_figure/gsea_TN_LN_vs_PB.csv")
+```
+
+```{r, fig.width=10, fig.height=5}
+df <- read.csv("CLL_analysis_figure/gsea_TN_LN_vs_PB.csv", row.names = 1)
+df <- df[grep("HALLMARK", df$Description), ]
+up_df <- df[df$NES > 0, ]
+up_df <- up_df[1:5, ]
+up_df$direction <- "UP"
+dw_df <- df[df$NES < 0, ]
+dw_df <- dw_df[1:2, ]
+dw_df$direction <- "DOWN"
+
+df <- rbind(up_df, dw_df)
+df$Description <- factor(df$Description, levels=rev(df$Description))
+
+c1=adjustcolor("#0072B2",0.7)
+c2=adjustcolor("#B20072",0.7)
+
+ggplot(df,aes(x=Description,y=abs(NES),fill=direction))+
+  geom_bar(stat="identity",width=0.7)+
+  coord_flip()+
+  scale_fill_manual(values=c(c1,c2))+
+  theme_minimal() + 
+  xlab(NULL) + 
+  ylab("Normalised enrichment score")+
+  theme(axis.text.y=element_text(size=14,hjust=0),
+        axis.line.x=element_line(size=0.3,color="black"),
+        axis.ticks.length.x=unit(-0.20,"cm"),
+        axis.text.x=element_text(margin=margin(t=0.3,unit="cm")),
+        panel.grid.major=element_blank())+
+  ggtitle("Top enriched HALLMARK pathways in treatment-naive CLL cell, LN vs PB")
+ggsave("CLL_analysis_figure/barplot_gsea_TN_LN_vs_PB.pdf", width = 10, height = 5)
+```
+
+## make figure Q1Q2
+```{r, fig.width=6, fig.height=3}
+LN_df <- read.csv("CLL_analysis_figure/gsea_LN_CLL_relpase_vs_pre.csv")
+PB_df <- read.csv("CLL_analysis_figure/gsea_PB_CLL_relpase_vs_pre.csv")
+LN_df <- LN_df[grepl("HALLMARK", LN_df$Description) | grepl("KEGG", LN_df$Description), c("ID", "NES", "qvalue")]
+LN_df$compartment <- "LN"
+
+PB_df <- PB_df[grepl("HALLMARK", PB_df$Description) | grepl("KEGG", PB_df$Description), c("ID", "NES", "qvalue")]
+PB_df$compartment <- "PB"
+
+gsea_df <- rbind(PB_df, LN_df)
+gsea_df$direction <- "UP"
+gsea_df$direction[gsea_df$NES < 0] <- "DOWN"
+gsea_df$direction <- factor(gsea_df$direction, levels = c("UP", "DOWN"))
+
+colorRampPalette(c("navy", "white", "firebrick3"))(50)
+ggplot(gsea_df, aes(x = compartment, y = ID)) + 
+  geom_point(aes(size = abs(NES), colour = direction)) + 
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x=element_text(angle=90,hjust = 1,vjust=0.5),
+        axis.text.y=element_text(face = "bold", color = "grey40")) +
+  #scale_color_manual(values = c("navy","firebrick3")) + 
+  #scale_fill_continuous() + 
+  scale_y_discrete(position = "right") +
+  labs(x=NULL,y=NULL) + 
+  ggtitle("Pathway enrichment after venetoclax treatment") +
+  scale_color_manual(values = ggsci::pal_npg(alpha = 0.8)(2))
+ggsave("CLL_analysis_figure/dotplot_gsea_relapse_vs_pre.pdf", width = 6, height = 3)
+```
+
+```{r, fig.width=8, fig.height=1.5}
+LN_df$direction <- "UP"
+LN_df$direction[LN_df$NES < 0] <- "DOWN"
+LN_df$direction <- factor(LN_df$direction, levels = c("UP", "DOWN"))
+LN_df$ID <- factor(LN_df$ID, levels = LN_df$ID)
+ggplot(LN_df, aes(x = NES, y = ID, fill = direction)) + 
+  geom_col(width = 0.8) + 
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x=element_text(angle=90,hjust = 1,vjust=0.5),
+        axis.text.y=element_text(face = "bold", color = "grey40")) +
+  ylab(NULL) + 
+  xlab("Normalized enrichment score") + 
+  scale_fill_manual(values = ggsci::pal_npg(alpha = 0.8)(2))
+```
+
+```{r, fig.width=15, fig.height=5}
+FeaturePlot(x, features = "CCND1", reduction = "harmonyUMAP", max.cutoff = "q99", min.cutoff = "q1", split.by = "stage", order = T, raster = T, pt.size = 1)
+ggsave("CLL_analysis_figure/umap_ccnd1_by_stage.pdf", width = 15, height = 5)
+```
+
+```{r, fig.width=10, fig.height=5}
+z <- subset(x, stage == "VEN-relapsed")
+FeaturePlot(z, features = "CCND1", reduction = "harmonyUMAP", max.cutoff = "q99", min.cutoff = "q1", split.by = "compartment", order = T, raster = T, pt.size = 1)
+ggsave("CLL_analysis_figure/umap_ccnd1_venR_by_compartment.pdf", width = 10, height = 5)
+```
+
+
+#DE protein
+```{r}
+sample.ls <- c(CLL400_LN = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL400_GEX_LN/outs/filtered_feature_bc_matrix/",
+                  CLL400_PB = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL400_GEX_PB/outs/filtered_feature_bc_matrix/",
+                  CLL427_LN = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL427_GEX_LN/outs/filtered_feature_bc_matrix/",
+                  CLL427_PB = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL400_427_LN_PB/rachelT_100522/matrix/CLL427_GEX_PB/outs/filtered_feature_bc_matrix/",
+                  CLL281_LN_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_LN/CLL281_LN_count20/outs/filtered_feature_bc_matrix/",
+                  CLL281_LN_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_LN/CLL281_LN_count80/outs/filtered_feature_bc_matrix/",
+                  CLL281_PB_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_PB/CLL281_PB_count20/outs/filtered_feature_bc_matrix/",
+                  CLL281_PB_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL281_PB_LN/cll281_PB/CLL281_PB_count80/outs/filtered_feature_bc_matrix/",
+                  CLL295_LN_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_LN/CLL295_LN_count20/outs/filtered_feature_bc_matrix/",
+                  CLL295_LN_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_LN/CLL295_LN_count80/outs/filtered_feature_bc_matrix/",
+                  CLL295_PB_20 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_PB/CLL295_PB_count20/outs/filtered_feature_bc_matrix/",
+                  CLL295_PB_80 = "/stornext/Genomics/data/CLL_venetoclax/single_cell_data/Illumina_data/CLL295_PB_LN/cll295_PB/CLL295_PB_count80/outs/filtered_feature_bc_matrix/")
+# read in data
+data10X=Read10X(sample.ls)
+srt=CreateSeuratObject(counts=data10X$`Gene Expression`,project="LNvsPB",min.cells=10)
+srt[["ADT"]]=CreateAssayObject(counts=data10X$`Antibody Capture`,min.cells=10)
+```
+
+```{r}
+keep_cell <- colnames(srt) %in% colnames(x)
+srt <- srt[, keep_cell]
+srt$patient <- sapply(strsplit(colnames(srt), "_"), function(x){x[1]})
+srt$compartment <- sapply(strsplit(colnames(srt), "_"), function(x){x[2]})
+srt$stage <- "VEN-relapsed"
+srt$stage[srt$patient %in% c("CLL400", "CLL427")] <- "VEN-naïve"
+```
+
+```{r,fig.width=11,fig.height=5}
+pt=srt
+#make sce
+matr=pt@assays$ADT@counts
+md=pt@meta.data[,c("patient", "compartment", "stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("compartment","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:6329,retain:12523
+y=y[keep,,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 stage_id=as.character(y$samples$stage),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$compartment)
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+p1=ggplot(gg_df,aes(x,y,col=stage_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p2=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p <- p1+p2
+p
+ggsave("CLL_analysis_figure/MDS_prot.pdf", width = 11, height = 5)
+```
+
+```{r, fig.width=11, fig.height=5}
+pt=subset(srt, stage == "pre-VEN")
+#make sce
+matr=pt@assays$ADT@counts
+md=pt@meta.data[,c("patient","compartment","stage")]
+sce=SingleCellExperiment(assay=list(counts=matr),colData=md)
+
+pool=scater::aggregateAcrossCells(sce,id=colData(sce)[,c("compartment","patient")])
+
+y=pool
+y=DGEList(counts=counts(y),samples=colData(y),remove.zeros=T)
+#filtering 
+keep=filterByExpr(y,group=y$samples$stage)
+summary(keep)#rm:6329,retain:12523
+y=y[keep,,keep.lib.sizes=FALSE]
+#calculate normalization factors
+y=calcNormFactors(y)
+#plot MDS
+mds=plotMDS.DGEList(y,plot=F)
+gg_df=data.frame(mds[c("x","y")],
+                 stage_id=as.character(y$samples$stage),
+                 patient_id=y$samples$patient,
+                 group_id=y$samples$compartment)
+
+#getPalette=colorRampPalette(brewer.pal(10,"Set1"))
+p1=ggplot(gg_df,aes(x,y,col=stage_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p2=ggplot(gg_df,aes(x,y,col=patient_id,shape=group_id))+
+    geom_point(size=4,alpha=0.8)+
+    labs(x="MDS dim1",y="MDS dim2")+
+    theme(panel.grid.minor=element_blank())+
+    #coord_fixed()+
+    #ggtitle(paste0(i," MDS plot"))+
+    ggtitle("MDS plot: basic clusters") +
+    scale_color_manual(values=c1)+
+    theme_bw()
+p <- p1+p2
+p
+```
+
+```{r}
+#y$samples$stage <- gsub("-", "_", y$samples$stage)
+#make design
+f1=factor(y$samples$compartment,levels=c("LN","PB"))
+f2=y$samples$patient
+design=model.matrix(~0+f1+f2)
+colnames(design)=gsub("f\\d","",colnames(design))
+  
+#make contrast
+contr=makeContrasts(
+  comparison=LN-PB,
+  levels=colnames(design)
+)
+  
+y=estimateDisp(y,design)
+plotBCV(y)
+  
+fit=glmFit(y,design)
+lrt=glmLRT(fit,contrast=contr)
+#fit=glmQLFit(y,design)
+#lrt=glmQLFTest(fit,contrast=contr)
+DEG=topTags(lrt,n=Inf)
+  
+#the proportion of cell express this gene
+df=DEG$table
+df$gene <- rownames(df)
+write.csv(df, file = "CLL_analysis_figure/edgeR_pre_LN_vs_PB_prot.csv")
+```
+
+```{r,fig.width=7, fig.height=8}
+df <- read.csv("CLL_analysis_figure/edgeR_relapse_LN_vs_PB_prot.csv", row.names = 1)
+EnhancedVolcano::EnhancedVolcano(df,
+                x="logFC",y="FDR",
+                lab=rownames(df),
+                #xlim=c(-10,10),
+                #ylim=c(0,50),
+                title = "DEPs in VEN-naive CLL cells, LN vs PB",
+                subtitle = paste0('FDR cutoff = 0.05', "  logFC cutoff = 1"),
+                #selectLab = c("CTLA4","PDCD1","TIGIT","LAG3","HAVCR2","BTLA","TOX"),
+                labSize = 6, 
+                boxedLabels = T, 
+                raster = T,
+                legendPosition = "top",
+                legendLabSize = 12,
+                legendIconSize = 4.0,
+                drawConnectors = T,
+                pCutoff = 0.05,
+                FCcutoff = 1)
+ggsave("CLL_analysis_figure/volcano_relapse_LN_vs_PB_prot.pdf", width = 7, height = 8)
+```
+
+
+```{r, fig.width=7, fig.height=3.5}
+c1 <- adjustcolor("#3F5386", 0.7)
+c2 <- adjustcolor("#BC3E28", 0.7)
+DefaultAssay(srt) <- "ADT"
+srt <- NormalizeData(srt, normalization.method = "CLR")
+srt <- srt[, colnames(srt) %in% colnames(x)]
+srt$compartment <- factor(srt$compartment, levels = c("PB", "LN"))
+VlnPlot(srt, features = "CD274-(B7-H1--PD-L1)", group.by = "patient", pt.size = 0, split.by = "compartment", cols = c(c1, c2))
+ggsave("add_to_seminar_fig/pdl1.pdf", width = 7, height = 3.5)
+```
+
+#dsb: normalize the protein data
+```{r,fig.width=15,fig.height=5}
+#find the name of cells
+raw_srt_names=colnames(srt)
+#find the drop outs
+raw_pathway=gsub("filtered","raw",sample.ls)
+raw_data=Read10X(raw_pathway)
+background_names=setdiff(colnames(raw_data$`Gene Expression`),raw_srt_names)
+
+#split the data into separate matrices per assay 
+prot=raw_data$`Antibody Capture`
+rna=raw_data$`Gene Expression`
+#create metadata of droplet QC stats used in standard scRNAseq processing
+rna_size=log10(Matrix::colSums(rna))
+prot_size=log10(Matrix::colSums(prot))
+ngene=Matrix::colSums(rna>0)
+md=as.data.frame(cbind(rna_size,ngene,prot_size))
+md$bc=rownames(md)
+md$droplet_class=ifelse(test=md$bc %in% raw_srt_names,yes="cell",no="background")
+#Find out cells that have been filtered out
+lowq=raw_srt_names[!(raw_srt_names %in% colnames(srt))]
+md=md[!(md$bc %in% lowq),]
+md=md%>%dplyr::filter(rna_size>0 & prot_size>0)
+
+#plot
+c1=ggplot(md,aes(x=rna_size,fill=droplet_class)) + 
+  geom_density(alpha=0.3) + ggtitle("RNA library size") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) +
+  NoLegend()
+  
+c2=ggplot(md,aes(x=prot_size,fill=droplet_class)) + 
+  geom_density(alpha=0.3) + ggtitle("ADT library size") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) + 
+  NoLegend()
+
+c3=ggplot(md,aes(x=log10(ngene),fill=droplet_class)) + 
+  geom_density(alpha=0.3) + ggtitle("Gene detected") + 
+  theme_bw() +
+  theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank())
+c=c1+c2+c3
+#ggsave(plot=c,filename="prepare_matrix_figure/dsb_backgroud_vs_cells.pdf",width=15,height=5)
+c
+```
+
+```{r}
+#negative matrix
+background_to_use=md$bc[md$prot_size>1 & md$prot_size<3 & md$rna_size>1.5 & md$rna_size<3 & md$droplet_class=="background"]
+negative_mtx_rawprot=as.matrix(prot[,background_to_use])
+#positive matrix
+cells_mtx_rawprot=as.matrix(prot[,colnames(srt)])
+#chose markers
+nrow(cells_mtx_rawprot)#139
+markers=sort(rowSums(cells_mtx_rawprot),decreasing=T)
+markers=names(markers)[markers>30]#I will retain markers > 30
+cells_mtx_rawprot=cells_mtx_rawprot[markers,]
+negative_mtx_rawprot=negative_mtx_rawprot[markers,]
+#find controls
+ctrl=rownames(cells_mtx_rawprot)[grep("Ctrl",rownames(cells_mtx_rawprot))]
+#run dsb
+output=DSBNormalizeProtein(cell_protein_matrix=cells_mtx_rawprot,
+                            empty_drop_matrix=negative_mtx_rawprot,
+                            denoise.counts=T,
+                            use.isotype.control=T,
+                            isotype.control.name.vec=ctrl)
+```
+
+```{r}
+y <- subset(x, orig.ident == "CLL281")
+table(y$compartment)
+markers <- FindMarkers(y, group.by = "compartment", ident.1 = "LN", ident.2 = "PB", logfc.threshold = 0)
+markers$gene <- rownames(markers)
+View(markers)
+write.csv(markers, "add_to_seminar_fig/CLL281_de_LN_vs_PB.csv")
+
+y <- subset(x, orig.ident == "CLL295")
+table(y$compartment)
+markers <- FindMarkers(y, group.by = "compartment", ident.1 = "LN", ident.2 = "PB", logfc.threshold = 0)
+markers$gene <- rownames(markers)
+View(markers)
+write.csv(markers, "add_to_seminar_fig/CLL295_de_LN_vs_PB.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#end

@@ -1,0 +1,90 @@
+---
+title: "t_find_cluster"
+author: "Hongke Peng"
+date: '2022-09-02'
+output: html_document
+---
+
+#load library
+```{r}
+library(Seurat)
+library(harmony)
+library(Scillus)
+library(progeny)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(dittoSeq)
+library(clusterProfiler)
+library(gprofiler2)
+library(enrichplot)
+library(escape)
+library(msigdbr)
+library(GSEABase)
+library(GSVA)
+library(org.Hs.eg.db)
+```
+
+
+```{r}
+x <- readRDS("t_cell_cluster_figure/refined_t_cluster.rds")
+```
+
+```{r,fig.width=15,,fig.height=5}
+p1=DimPlot(x,reduction="wnnUMAP",group.by="patient") + NoAxes()
+p2=DimPlot(x,reduction="wnnUMAP",group.by="compartment") + NoAxes()
+p3=DimPlot(x,reduction="wnnUMAP",group.by="wsnn_res.0.8", label = T, cols = c(ggsci::pal_npg(alpha = 0.7)(8), ggsci::pal_nejm(alpha = 0.7)(8), ggsci::pal_jama(alpha = 0.7)(8)), label.box = T, pt.size = 0.1, label.size = 3) + NoAxes()
+p1+p2+p3
+#ggsave(plot=p,filename="find_cluster_figure/plot_harmonyUMAP.pdf",width=15,height=5)
+```
+
+
+```{r,fig.width=12, fig.height=8}
+DefaultAssay(x) <- "RNA"
+rownames(x)[grep("TIM", rownames(x))]
+gene_to_use=c("PDCD1", "HAVCR2", "ICOS", "LAG3", "TIGIT", "CTLA4")
+FeaturePlot(x, reduction = "wnnUMAP", features = gene_to_use, min.cutoff = "q5", max.cutoff = "q95", ncol = 3, order = T)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#end

@@ -1,0 +1,316 @@
+---
+title: "Cell Chat analysis"
+author: "Hongke Peng"
+date: "2023-10-31"
+output: html_document
+---
+
+#load libraries
+```{R}
+library(Seurat)
+library(ggplot2)
+#library(dittoSeq)
+#library(harmony)
+#library(CellChat)
+#library(clusterProfiler)
+set.seed(1)
+```
+
+```{r}
+y <- readRDS("make_umap/t_NK.rds")
+```
+
+#prepare data
+```{r,fig.width=17,fig.height=5}
+c1 <- c(ggsci::pal_npg(alpha = 0.7)(8), ggsci::pal_nejm(alpha = 0.7)(8), ggsci::pal_jama(alpha = 0.7)(8))
+y$stage <- "VEN-relapsed"
+y$stage[y$patient %in% c("CLL400", "CLL427")] <- "VEN-naive"
+p1=DimPlot(y,reduction="wnnUMAP",group.by="stage") + NoAxes()
+p2=DimPlot(y,reduction="wnnUMAP",group.by="compartment",pt.size = 0.8, raster = T) + NoAxes()
+p3=DimPlot(y,reduction="wnnUMAP",group.by="refined.cluster", label = T, cols = c1, pt.size = 0.8, label.size = 5, order = F, raster = T, label.box = T) + NoAxes()
+p <- p3 + p2 + p1
+p
+```
+
+
+```{r, fig.width=7, fig.height=4}
+y <- subset(y, refined.cluster %in% c(0:6, 8:12))
+table(y$Sample, y$refined.cluster)
+y$cell.type <- as.character(y$refined.cluster)
+y$cell.type[y$refined.cluster == 0] <- "CD4_Tem"
+y$cell.type[y$refined.cluster == 1] <- "CD4_Tcm"
+y$cell.type[y$refined.cluster == 2] <- "CD4_Tn"
+y$cell.type[y$refined.cluster == 3] <- "CD4_Tfh"
+y$cell.type[y$refined.cluster == 4] <- "CD4_Treg"
+y$cell.type[y$refined.cluster == 5] <- "CD4_Tex_stem_like"
+y$cell.type[y$refined.cluster == 6] <- "CD4_Tex"
+y$cell.type[y$refined.cluster == 7] <- "CD4_Tc"
+y$cell.type[y$refined.cluster == 8] <- "CD8_Tex"
+y$cell.type[y$refined.cluster == 9] <- "CD8_Tex_stem_like"
+y$cell.type[y$refined.cluster == 10] <- "CD8_Tn"
+y$cell.type[y$refined.cluster == 11] <- "CD8_Tem"
+y$cell.type[y$refined.cluster == 12] <- "CD8_Temra"
+y$cell.type[y$refined.cluster == 13] <- "T_gd"
+y$cell.type[y$refined.cluster == 14] <- "CD56hi_NK"
+y$cell.type[y$refined.cluster == 15] <- "CD56low_NK"
+DimPlot(y,reduction="wnnUMAP",group.by="cell.type", label = T, cols = c1, label.box = T, pt.size = 0.8, label.size = 3, order = F, raster = T) + NoAxes()
+```
+#CLL281
+##CLL281 LN data
+```{r}
+cll <- readRDS("make_umap/cll.rds")
+cll <- subset(cll, Sample == "CLL281_LN")
+DefaultAssay(cll) <- "RNA"
+cll <- NormalizeData(cll)
+names(cll)
+cll@meta.data <- cll@meta.data[, c("Sample", "nCount_RNA", "nFeature_RNA", "compartment", "patient")]
+cll$cell.type <- "CLL"
+for (i in names(cll@reductions)) {
+  cll[[i]] <- NULL
+}
+
+Tcell <- subset(y, Sample == "CLL281_LN")
+DefaultAssay(Tcell) <- "RNA"
+Tcell <- NormalizeData(Tcell)
+Tcell@meta.data <- Tcell@meta.data[, c("Sample", "nCount_RNA", "nFeature_RNA", "compartment", "patient", "cell.type")]
+for (i in names(Tcell@reductions)) {
+  Tcell[[i]] <- NULL
+}
+Tcell[["DSB"]] <- NULL
+Tcell[["DSBc"]] <- NULL
+Tcell[["ADT"]] <- NULL
+table(Tcell$cell.type)
+
+srt <- merge(cll, Tcell, add.cell.ids = c("CLL", "T"))
+srt <- NormalizeData(srt)
+```
+
+```{r}
+#create a cellchat object
+data.input <- GetAssayData(srt, assay = "RNA", slot = "data")
+meta <- srt@meta.data[, "cell.type"]
+table(meta)
+meta = data.frame(labels = meta, row.names = colnames(data.input))
+cellchat <- createCellChat(object = data.input, meta = meta, group.by = "labels")
+
+cellchat <- addMeta(cellchat, meta = meta)
+cellchat <- setIdent(cellchat, ident.use = "labels") # set "labels" as default cell identity
+levels(cellchat@idents) # show factor levels of the cell labels
+groupSize <- as.numeric(table(cellchat@idents)) # number of cells in each cell group
+
+CellChatDB <- CellChatDB.human # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+CellChatDB.use=subsetDB(CellChatDB.human,search=c("Secreted Signaling","Cell-Cell Contact"))
+cellchat@DB=CellChatDB.use
+
+#subset expressing data
+cellchat=subsetData(cellchat)
+cellchat=identifyOverExpressedGenes(cellchat)
+cellchat=identifyOverExpressedInteractions(cellchat)
+cellchat=projectData(cellchat,PPI.human)
+
+#test target interaction 
+computeAveExpr(cellchat,features=c("IL4","IL4R","IL2RG","PDCD1","PDCD1LG2","CD274","CD4","CD8"),type="truncatedMean",trim=0.001)
+#compute communication prob on recepter-ligand level
+cellchat=computeCommunProb(cellchat,type="truncatedMean",trim=0.001,population.size=F)
+cellchat=filterCommunication(cellchat,min.cells=10)
+#infer the cell-cell communication on signaling pathway level
+cellchat=computeCommunProbPathway(cellchat)
+cellchat=aggregateNet(cellchat)
+```
+
+```{r, fig.width=10, fig.height=10}
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+```
+
+
+```{r}
+cellchat@idents#Levels: CD4_Tcm CD4_Tem CD4_Tex CD4_Tex_stem_like CD4_Tfh CD4_Tn CD4_Treg CD8_Tem CD8_Temra CD8_Tex CD8_Tex_stem_like CD8_Tn CLL
+ln.net=subsetCommunication(cellchat,sources.use=c(13),targets.use=c(1:12))
+ln.net=ln.net[,c("source","target","ligand","receptor","prob","interaction_name_2","pathway_name","annotation","evidence")]
+ln.df=tidyr::spread(ln.net,target,prob)
+ln.df=ln.df[,c("interaction_name_2","LN.CD4.T","LN.CD8.T")]
+pb.net=subsetCommunication(cellchat,sources.use=c(6),targets.use=c(4,5))
+pb.net=pb.net[,c("source","target","ligand","receptor","prob","interaction_name_2","pathway_name","annotation","evidence")]
+pb.df=tidyr::spread(pb.net,target,prob)
+pb.df=pb.df[,c("interaction_name_2","PB.CD4.T","PB.CD8.T")]
+```
+
+```{r, fig.width=10, fig.height=20}
+netVisual_bubble(cellchat, sources.use = 13, targets.use = 1:12, remove.isolate = FALSE)
+```
+
+
+```{r, fig.width=10, fig.height=10}
+pathways.show <- c("PD-L1")
+par(mfrow=c(1,1))
+netVisual_aggregate(cellchat, signaling = pathways.show, layout = "chord")
+```
+```{r}
+netAnalysis_contribution(cellchat, signaling = pathways.show)
+```
+
+
+
+```{r,fig.width=6,fig.height=5}
+netVisual_heatmap(cellchat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+
+
+
+##CLL281 PB data 
+```{r}
+CellChatDB <- CellChatDB.human # use CellChatDB.mouse if running on mouse data
+showDatabaseCategory(CellChatDB)
+CellChatDB.use=subsetDB(CellChatDB.human,search=c("Secreted Signaling","Cell-Cell Contact"))
+all_cll <- readRDS("make_umap/cll.rds")
+for (j in unique(y$Sample)) {
+  #prepare cll data
+  cll <- subset(all_cll, Sample == j)
+  DefaultAssay(cll) <- "RNA"
+  cll <- NormalizeData(cll)
+  names(cll)
+  cll@meta.data <- cll@meta.data[, c("Sample", "nCount_RNA", "nFeature_RNA", "compartment", "patient")]
+  cll$cell.type <- "CLL"
+  for (i in names(cll@reductions)) {
+    cll[[i]] <- NULL
+  }
+  #prepare T cell data
+  Tcell <- subset(y, Sample == j)
+  DefaultAssay(Tcell) <- "RNA"
+  Tcell <- NormalizeData(Tcell)
+  Tcell@meta.data <- Tcell@meta.data[, c("Sample", "nCount_RNA", "nFeature_RNA", "compartment", "patient", "cell.type")]
+  for (i in names(Tcell@reductions)) {
+    Tcell[[i]] <- NULL
+  }
+  Tcell[["DSB"]] <- NULL
+  Tcell[["DSBc"]] <- NULL
+  Tcell[["ADT"]] <- NULL
+  table(Tcell$cell.type)
+
+  srt <- merge(cll, Tcell, add.cell.ids = c("CLL", "T"))
+  srt <- NormalizeData(srt)
+  #create a cellchat object
+  data.input <- GetAssayData(srt, assay = "RNA", slot = "data")
+  meta <- srt@meta.data[, "cell.type"]
+  table(meta)
+  meta = data.frame(labels = meta, row.names = colnames(data.input))
+  cellchat <- createCellChat(object = data.input, meta = meta, group.by = "labels")
+
+  cellchat <- addMeta(cellchat, meta = meta)
+  cellchat <- setIdent(cellchat, ident.use = "labels") # set "labels" as default cell identity
+  levels(cellchat@idents) # show factor levels of the cell labels
+  groupSize <- as.numeric(table(cellchat@idents)) # number of cells in each cell group
+
+  cellchat@DB=CellChatDB.use
+
+  #subset expressing data
+  cellchat=subsetData(cellchat)
+  cellchat=identifyOverExpressedGenes(cellchat)
+  cellchat=identifyOverExpressedInteractions(cellchat)
+  cellchat=projectData(cellchat,PPI.human)
+
+  #test target interaction 
+  computeAveExpr(cellchat,features=c("IL4","IL4R","IL2RG","PDCD1","PDCD1LG2","CD274","CD4","CD8"),type="truncatedMean",trim=0.001)
+  #compute communication prob on recepter-ligand level
+  cellchat=computeCommunProb(cellchat,type="truncatedMean",trim=0.001,population.size=T)
+  cellchat=filterCommunication(cellchat,min.cells=100)
+  #infer the cell-cell communication on signaling pathway level
+  cellchat=computeCommunProbPathway(cellchat)
+  cellchat=aggregateNet(cellchat)
+  saveRDS(cellchat, paste0("cellchat_figure/cellchat_",j,".rds"))
+}
+```
+
+```{r}
+
+```
+
+```{r, fig.width=10, fig.height=10}
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+```
+
+
+```{r}
+cellchat@idents#Levels: CD4_Tcm CD4_Tem CD4_Tex CD4_Tex_stem_like CD4_Tfh CD4_Tn CD4_Treg CD8_Tem CD8_Temra CD8_Tex CD8_Tex_stem_like CD8_Tn CLL
+ln.net=subsetCommunication(cellchat,sources.use=c(13),targets.use=c(1:12))
+ln.net=ln.net[,c("source","target","ligand","receptor","prob","interaction_name_2","pathway_name","annotation","evidence")]
+ln.df=tidyr::spread(ln.net,target,prob)
+ln.df=ln.df[,c("interaction_name_2","LN.CD4.T","LN.CD8.T")]
+pb.net=subsetCommunication(cellchat,sources.use=c(6),targets.use=c(4,5))
+pb.net=pb.net[,c("source","target","ligand","receptor","prob","interaction_name_2","pathway_name","annotation","evidence")]
+pb.df=tidyr::spread(pb.net,target,prob)
+pb.df=pb.df[,c("interaction_name_2","PB.CD4.T","PB.CD8.T")]
+```
+
+```{r, fig.width=10, fig.height=20}
+netVisual_bubble(cellchat, sources.use = 13, targets.use = 1:12, remove.isolate = FALSE)
+```
+
+
+```{r, fig.width=10, fig.height=10}
+pathways.show <- c("PD-L1")
+par(mfrow=c(1,1))
+netVisual_aggregate(cellchat, signaling = pathways.show, layout = "chord")
+```
+
+```{r}
+netAnalysis_contribution(cellchat, signaling = pathways.show)
+```
+
+
+
+```{r,fig.width=6,fig.height=5}
+netVisual_heatmap(cellchat, signaling = pathways.show, color.heatmap = "Reds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#end
